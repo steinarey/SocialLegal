@@ -1,0 +1,627 @@
+<!doctype html>
+<html lang="is">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>SocialLegal — Ingest</title>
+<style>
+  :root {
+    --bg: #f7f7f5;
+    --panel: #ffffff;
+    --ink: #1f2328;
+    --muted: #6b7280;
+    --accent: #1f5fff;
+    --accent-soft: #e8eeff;
+    --border: #e5e7eb;
+    --ok: #047a3a;
+    --ok-bg: #e6f6ec;
+    --warn: #815c00;
+    --warn-bg: #fff8e6;
+    --err: #b42318;
+    --err-bg: #fdecea;
+    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; min-height: 100%; }
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh;
+  }
+  header.bar {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    padding: 0.75rem 1.25rem;
+    background: var(--panel);
+    border-bottom: 1px solid var(--border);
+  }
+  header.bar h1 { margin: 0; font-size: 1.05rem; font-weight: 600; }
+  header.bar .spacer { flex: 1; }
+  header.bar a {
+    color: var(--muted);
+    text-decoration: none;
+    font-size: 0.85rem;
+  }
+  header.bar a:hover { color: var(--ink); }
+  header.bar a.primary-link { color: var(--accent); }
+
+  main {
+    flex: 1;
+    max-width: 880px;
+    width: 100%;
+    margin: 0 auto;
+    padding: 1.25rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1.25rem;
+  }
+
+  .tab-bar {
+    display: flex;
+    gap: 0.4rem;
+    border-bottom: 1px solid var(--border);
+  }
+  .tab-bar button {
+    background: transparent;
+    border: none;
+    padding: 0.55rem 0.9rem;
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: var(--muted);
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -1px;
+  }
+  .tab-bar button.active {
+    color: var(--accent);
+    border-bottom-color: var(--accent);
+  }
+  .tab-panel { display: none; flex-direction: column; gap: 1.25rem; }
+  .tab-panel.active { display: flex; }
+
+  section.card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 1rem 1.25rem;
+  }
+  section.card h2 {
+    margin: 0 0 0.25rem;
+    font-size: 1rem;
+    font-weight: 600;
+  }
+  section.card p.help {
+    margin: 0 0 0.75rem;
+    color: var(--muted);
+    font-size: 0.85rem;
+  }
+
+  textarea, input[type="text"], select {
+    width: 100%;
+    padding: 0.6rem 0.8rem;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-size: 0.9rem;
+    background: #fff;
+    font-family: inherit;
+  }
+  textarea {
+    min-height: 160px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.85rem;
+    resize: vertical;
+  }
+  textarea:focus, input:focus, select:focus {
+    outline: 2px solid var(--accent-soft);
+    border-color: var(--accent);
+  }
+  label.field {
+    display: block;
+    margin-bottom: 0.7rem;
+  }
+  label.field .lbl {
+    display: block;
+    font-size: 0.8rem;
+    color: var(--muted);
+    margin-bottom: 0.25rem;
+  }
+  .row {
+    display: flex;
+    gap: 0.6rem;
+    align-items: center;
+    margin-top: 0.6rem;
+    flex-wrap: wrap;
+  }
+  button {
+    padding: 0.55rem 1rem;
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    font-size: 0.9rem;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  button.ghost {
+    background: transparent;
+    color: var(--ink);
+    border: 1px solid var(--border);
+  }
+  button:disabled { opacity: 0.55; cursor: progress; }
+  .status { color: var(--muted); font-size: 0.85rem; }
+
+  .badges { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-top: 0.5rem; }
+  .badge {
+    font-size: 0.78rem;
+    padding: 0.2rem 0.55rem;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    background: #fff;
+  }
+  .badge.ok { background: var(--ok-bg); color: var(--ok); border-color: #c4e9d0; }
+  .badge.warn { background: var(--warn-bg); color: var(--warn); border-color: #f1d77b; }
+  .badge.err { background: var(--err-bg); color: var(--err); border-color: #f4b9b3; }
+
+  ul.result-list {
+    margin: 0.75rem 0 0;
+    padding: 0;
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+  }
+  ul.result-list li {
+    padding: 0.5rem 0.75rem;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: #fff;
+    font-size: 0.85rem;
+    word-break: break-word;
+  }
+  ul.result-list li.ok { border-color: #c4e9d0; background: var(--ok-bg); }
+  ul.result-list li.warn { border-color: #f1d77b; background: var(--warn-bg); }
+  ul.result-list li.err { border-color: #f4b9b3; background: var(--err-bg); }
+  ul.result-list .meta { color: var(--muted); font-size: 0.78rem; margin-top: 0.1rem; }
+
+  pre.raw {
+    margin-top: 0.75rem;
+    background: #0c1320;
+    color: #d6e1ff;
+    padding: 0.75rem;
+    border-radius: 8px;
+    overflow-x: auto;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.78rem;
+    max-height: 320px;
+  }
+  details summary {
+    cursor: pointer;
+    color: var(--muted);
+    font-size: 0.8rem;
+    margin-top: 0.6rem;
+  }
+
+  .muni-row { display: flex; gap: 0.5rem; align-items: center; }
+  .muni-row select { flex: 1; }
+  .new-muni-form {
+    display: none;
+    gap: 0.5rem;
+    margin-top: 0.5rem;
+    align-items: center;
+  }
+  .new-muni-form.shown { display: flex; }
+  .checkbox-row {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.85rem;
+    margin-top: 0.4rem;
+  }
+  .file-input {
+    padding: 0.4rem;
+    border: 1px dashed var(--border);
+    border-radius: 8px;
+    background: #fcfcfa;
+    font-size: 0.85rem;
+  }
+</style>
+</head>
+<body>
+<header class="bar">
+  <h1>SocialLegal — Ingest</h1>
+  <span class="spacer"></span>
+  <a href="/" class="primary-link">← Back to chat</a>
+  <a href="/logout">Log out</a>
+</header>
+
+<main>
+  <div class="tab-bar" role="tablist">
+    <button id="tab-laws" class="active" role="tab" aria-selected="true">Laws</button>
+    <button id="tab-other" role="tab" aria-selected="false">Other</button>
+  </div>
+
+  <!-- ===================== LAWS TAB ===================== -->
+  <div id="panel-laws" class="tab-panel active">
+    <section class="card">
+      <h2>Ingest law URLs</h2>
+      <p class="help">
+        Paste althingi URLs, one per line (e.g.
+        <code>https://www.althingi.is/lagas/nuna/1997129.html</code>). Already-ingested
+        URLs are skipped.
+      </p>
+      <textarea id="urls" spellcheck="false" placeholder="https://www.althingi.is/lagas/nuna/1997129.html&#10;https://www.althingi.is/lagas/nuna/2003090.html"></textarea>
+      <div class="row">
+        <button id="ingest-btn">Ingest URLs</button>
+        <span class="status" id="ingest-status"></span>
+      </div>
+      <div id="ingest-results"></div>
+    </section>
+
+    <section class="card">
+      <h2>Resolve cross-references</h2>
+      <p class="help">
+        Walks unresolved cross-references found in already-ingested articles and
+        partially ingests the targets so the LLM can follow them. One level per
+        run — re-run if newly ingested articles introduce further references.
+      </p>
+      <div class="row">
+        <button id="resolve-btn" class="ghost">Resolve pending references</button>
+        <span class="status" id="resolve-status"></span>
+      </div>
+      <div id="resolve-results"></div>
+    </section>
+  </div>
+
+  <!-- ===================== OTHER TAB ===================== -->
+  <div id="panel-other" class="tab-panel">
+    <section class="card">
+      <h2>Upload a document</h2>
+      <p class="help">
+        PDF, plain-text or HTML. The file is parsed, chunked, embedded, and indexed for
+        retrieval. Optionally tag it with a municipality.
+      </p>
+
+      <label class="field">
+        <span class="lbl">Document name</span>
+        <input id="doc-name" type="text" placeholder="e.g. Reglur Reykjavíkurborgar um félagslegt leiguhúsnæði" />
+      </label>
+
+      <label class="field">
+        <span class="lbl">File (PDF, TXT or HTML)</span>
+        <input id="doc-file" type="file" class="file-input" accept=".pdf,.txt,.html,.htm,application/pdf,text/plain,text/html" />
+      </label>
+
+      <label class="field">
+        <span class="lbl">Municipality</span>
+        <div class="muni-row">
+          <select id="muni-select">
+            <option value="">— select —</option>
+          </select>
+          <button type="button" class="ghost" id="muni-new-toggle">+ New</button>
+        </div>
+        <div class="checkbox-row">
+          <input type="checkbox" id="muni-none" />
+          <label for="muni-none">No municipality (general / shared document)</label>
+        </div>
+        <div class="new-muni-form" id="muni-new-form">
+          <input id="muni-new-name" type="text" placeholder="e.g. Reykjavík" />
+          <button type="button" id="muni-new-create">Create</button>
+          <button type="button" class="ghost" id="muni-new-cancel">Cancel</button>
+        </div>
+      </label>
+
+      <div class="row">
+        <button id="doc-submit">Upload & index</button>
+        <span class="status" id="doc-status"></span>
+      </div>
+      <div id="doc-results"></div>
+    </section>
+  </div>
+</main>
+
+<script>
+function escapeHtml(s) {
+  return String(s ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
+}
+
+// ---------------- Tabs ----------------
+function activateTab(which) {
+  for (const id of ["laws", "other"]) {
+    document.getElementById("tab-" + id).classList.toggle("active", id === which);
+    document.getElementById("tab-" + id).setAttribute("aria-selected", String(id === which));
+    document.getElementById("panel-" + id).classList.toggle("active", id === which);
+  }
+}
+document.getElementById("tab-laws").addEventListener("click", () => activateTab("laws"));
+document.getElementById("tab-other").addEventListener("click", () => {
+  activateTab("other");
+  loadMunicipalities();
+});
+
+// ---------------- Laws: ingest URLs ----------------
+function severityForStatus(s) {
+  if (s === "ingested" || s === "upgraded") return "ok";
+  if (s === "skipped") return "warn";
+  return "err";
+}
+
+function renderIngestResults(payload) {
+  const root = document.getElementById("ingest-results");
+  root.innerHTML = "";
+  if (!payload || !payload.results) return;
+  const s = payload.summary || {};
+  const badges = document.createElement("div");
+  badges.className = "badges";
+  badges.innerHTML =
+    `<span class="badge">total ${s.total ?? 0}</span>` +
+    `<span class="badge ok">ingested ${s.ingested ?? 0}</span>` +
+    `<span class="badge warn">skipped ${s.skipped ?? 0}</span>` +
+    `<span class="badge err">errors ${s.errors ?? 0}</span>`;
+  root.appendChild(badges);
+
+  const ul = document.createElement("ul");
+  ul.className = "result-list";
+  for (const r of payload.results) {
+    const li = document.createElement("li");
+    li.className = severityForStatus(r.status);
+    const main = `<strong>${escapeHtml(r.status)}</strong> — ${escapeHtml(r.url || "")}`;
+    let meta = "";
+    if (r.status === "ingested") {
+      meta = `${escapeHtml(r.law_number || "")} · ${escapeHtml(r.title || "")} · ${r.chapters ?? "?"} chapters · ${r.articles ?? "?"} articles`;
+    } else if (r.status === "error") {
+      meta = escapeHtml(r.error || "");
+    }
+    li.innerHTML = main + (meta ? `<div class="meta">${meta}</div>` : "");
+    ul.appendChild(li);
+  }
+  root.appendChild(ul);
+
+  const det = document.createElement("details");
+  det.innerHTML = `<summary>Raw JSON</summary><pre class="raw">${escapeHtml(JSON.stringify(payload, null, 2))}</pre>`;
+  root.appendChild(det);
+}
+
+function renderResolveResults(payload) {
+  const root = document.getElementById("resolve-results");
+  root.innerHTML = "";
+  if (!payload) return;
+
+  const resolved = payload.resolved || [];
+  const unresolved = payload.unresolved || [];
+  const errors = payload.errors || [];
+
+  const badges = document.createElement("div");
+  badges.className = "badges";
+  badges.innerHTML =
+    `<span class="badge ok">resolved ${resolved.length}</span>` +
+    `<span class="badge warn">unresolved ${unresolved.length}</span>` +
+    `<span class="badge err">errors ${errors.length}</span>`;
+  root.appendChild(badges);
+
+  if (resolved.length) {
+    const h = document.createElement("p"); h.className = "help"; h.textContent = "Resolved";
+    root.appendChild(h);
+    const ul = document.createElement("ul"); ul.className = "result-list";
+    for (const r of resolved) {
+      const li = document.createElement("li");
+      li.className = r.action === "ingested" ? "ok" : (r.action === "already_existed" ? "warn" : "err");
+      li.innerHTML =
+        `<strong>${escapeHtml(r.action)}</strong> — ${escapeHtml(r.to_law)} · anchor ${escapeHtml(r.to_article || "")}` +
+        `<div class="meta">from article #${r.from_article_id}</div>`;
+      ul.appendChild(li);
+    }
+    root.appendChild(ul);
+  }
+  if (unresolved.length) {
+    const h = document.createElement("p"); h.className = "help"; h.textContent = "Unresolved (whole-law references — manual ingestion required if needed)";
+    root.appendChild(h);
+    const ul = document.createElement("ul"); ul.className = "result-list";
+    for (const r of unresolved) {
+      const li = document.createElement("li");
+      li.className = "warn";
+      li.innerHTML =
+        `${escapeHtml(r.to_law)} — <code>${escapeHtml(r.to_law_url)}</code>` +
+        `<div class="meta">${escapeHtml(r.reason || "")}</div>`;
+      ul.appendChild(li);
+    }
+    root.appendChild(ul);
+  }
+  if (errors.length) {
+    const h = document.createElement("p"); h.className = "help"; h.textContent = "Errors";
+    root.appendChild(h);
+    const ul = document.createElement("ul"); ul.className = "result-list";
+    for (const r of errors) {
+      const li = document.createElement("li");
+      li.className = "err";
+      li.innerHTML = `<code>${escapeHtml(r.to_law_url || "")}</code><div class="meta">${escapeHtml(r.error || "")}</div>`;
+      ul.appendChild(li);
+    }
+    root.appendChild(ul);
+  }
+
+  const det = document.createElement("details");
+  det.innerHTML = `<summary>Raw JSON</summary><pre class="raw">${escapeHtml(JSON.stringify(payload, null, 2))}</pre>`;
+  root.appendChild(det);
+}
+
+async function postForm(url, fields) {
+  const fd = new FormData();
+  for (const [k, v] of Object.entries(fields)) {
+    if (v === null || v === undefined) continue;
+    fd.append(k, v);
+  }
+  const r = await fetch(url, { method: "POST", body: fd });
+  const ct = r.headers.get("content-type") || "";
+  const data = ct.includes("application/json") ? await r.json() : { detail: await r.text() };
+  if (!r.ok) {
+    const msg = (data && data.detail) || `HTTP ${r.status}`;
+    throw new Error(typeof msg === "string" ? msg : JSON.stringify(msg));
+  }
+  return data;
+}
+
+document.getElementById("ingest-btn").addEventListener("click", async () => {
+  const btn = document.getElementById("ingest-btn");
+  const status = document.getElementById("ingest-status");
+  const urls = document.getElementById("urls").value.trim();
+  if (!urls) { status.textContent = "Paste at least one URL."; return; }
+  btn.disabled = true;
+  status.textContent = "Ingesting (this can take a while for large laws)…";
+  document.getElementById("ingest-results").innerHTML = "";
+  try {
+    const data = await postForm("/ingest", { urls });
+    status.textContent = "Done.";
+    renderIngestResults(data);
+  } catch (e) {
+    status.textContent = "Failed: " + e.message;
+  } finally { btn.disabled = false; }
+});
+
+document.getElementById("resolve-btn").addEventListener("click", async () => {
+  const btn = document.getElementById("resolve-btn");
+  const status = document.getElementById("resolve-status");
+  btn.disabled = true;
+  status.textContent = "Resolving…";
+  document.getElementById("resolve-results").innerHTML = "";
+  try {
+    const data = await postForm("/ingest/resolve-references", {});
+    status.textContent = "Done.";
+    renderResolveResults(data);
+  } catch (e) {
+    status.textContent = "Failed: " + e.message;
+  } finally { btn.disabled = false; }
+});
+
+// ---------------- Other: documents ----------------
+let municipalitiesCache = [];
+
+async function loadMunicipalities() {
+  try {
+    const r = await fetch("/municipalities");
+    if (!r.ok) return;
+    municipalitiesCache = (await r.json()) || [];
+  } catch { return; }
+  populateMuniSelect();
+}
+
+function populateMuniSelect(selectId) {
+  const sel = document.getElementById("muni-select");
+  const current = selectId !== undefined ? String(selectId) : sel.value;
+  sel.innerHTML = '<option value="">— select —</option>';
+  for (const m of municipalitiesCache) {
+    const opt = document.createElement("option");
+    opt.value = String(m.id);
+    opt.textContent = m.name;
+    if (String(m.id) === current) opt.selected = true;
+    sel.appendChild(opt);
+  }
+}
+
+const newForm = document.getElementById("muni-new-form");
+document.getElementById("muni-new-toggle").addEventListener("click", () => {
+  newForm.classList.toggle("shown");
+  if (newForm.classList.contains("shown")) document.getElementById("muni-new-name").focus();
+});
+document.getElementById("muni-new-cancel").addEventListener("click", () => {
+  newForm.classList.remove("shown");
+  document.getElementById("muni-new-name").value = "";
+});
+document.getElementById("muni-new-create").addEventListener("click", async () => {
+  const nameEl = document.getElementById("muni-new-name");
+  const name = nameEl.value.trim();
+  if (!name) { nameEl.focus(); return; }
+  const status = document.getElementById("doc-status");
+  status.textContent = "Creating municipality…";
+  try {
+    const m = await postForm("/municipalities", { name });
+    municipalitiesCache.push(m);
+    municipalitiesCache.sort((a, b) => a.name.localeCompare(b.name));
+    populateMuniSelect(m.id);
+    document.getElementById("muni-none").checked = false;
+    newForm.classList.remove("shown");
+    nameEl.value = "";
+    status.textContent = `Created “${m.name}”.`;
+  } catch (e) {
+    status.textContent = "Create failed: " + e.message;
+  }
+});
+
+document.getElementById("muni-none").addEventListener("change", (e) => {
+  if (e.target.checked) document.getElementById("muni-select").value = "";
+});
+document.getElementById("muni-select").addEventListener("change", () => {
+  if (document.getElementById("muni-select").value) document.getElementById("muni-none").checked = false;
+});
+
+document.getElementById("doc-submit").addEventListener("click", async () => {
+  const btn = document.getElementById("doc-submit");
+  const status = document.getElementById("doc-status");
+  const resultsRoot = document.getElementById("doc-results");
+  resultsRoot.innerHTML = "";
+
+  const name = document.getElementById("doc-name").value.trim();
+  const fileEl = document.getElementById("doc-file");
+  const file = fileEl.files && fileEl.files[0];
+  const muniSel = document.getElementById("muni-select").value;
+  const muniNone = document.getElementById("muni-none").checked;
+
+  if (!name) { status.textContent = "Document name required."; return; }
+  if (!file) { status.textContent = "Pick a file."; return; }
+  if (!muniSel && !muniNone) {
+    status.textContent = "Select a municipality or check “No municipality”.";
+    return;
+  }
+
+  const fd = new FormData();
+  fd.append("name", name);
+  fd.append("file", file);
+  if (muniSel && !muniNone) fd.append("municipality_id", muniSel);
+
+  btn.disabled = true;
+  status.textContent = "Uploading & indexing…";
+  try {
+    const r = await fetch("/ingest/document", { method: "POST", body: fd });
+    const ct = r.headers.get("content-type") || "";
+    const data = ct.includes("application/json") ? await r.json() : { detail: await r.text() };
+    if (!r.ok) throw new Error(data.detail || `HTTP ${r.status}`);
+    status.textContent = "Done.";
+    renderDocResult(data);
+    document.getElementById("doc-name").value = "";
+    fileEl.value = "";
+  } catch (e) {
+    status.textContent = "Failed: " + e.message;
+  } finally { btn.disabled = false; }
+});
+
+function renderDocResult(payload) {
+  const root = document.getElementById("doc-results");
+  root.innerHTML = "";
+  const li = document.createElement("ul");
+  li.className = "result-list";
+  const item = document.createElement("li");
+  item.className = "ok";
+  item.innerHTML =
+    `<strong>Indexed</strong> — ${escapeHtml(payload.name)} (${escapeHtml(payload.source_type)})` +
+    `<div class="meta">document_id=${payload.document_id} · ${payload.chunks} chunks · ${payload.char_length.toLocaleString()} chars` +
+    (payload.municipality_id ? ` · municipality_id=${payload.municipality_id}` : ` · no municipality`) +
+    `</div>`;
+  li.appendChild(item);
+  root.appendChild(li);
+  const det = document.createElement("details");
+  det.innerHTML = `<summary>Raw JSON</summary><pre class="raw">${escapeHtml(JSON.stringify(payload, null, 2))}</pre>`;
+  root.appendChild(det);
+}
+
+// ---------------- Boot ----------------
+fetch("/me").then(r => { if (!r.ok) window.location.href = "/login"; });
+loadMunicipalities();
+</script>
+</body>
+</html>

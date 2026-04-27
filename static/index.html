@@ -1,0 +1,983 @@
+<!doctype html>
+<html lang="is">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>SocialLegal — Icelandic legal RAG</title>
+<style>
+  :root {
+    --bg: #f7f7f5;
+    --panel: #ffffff;
+    --ink: #1f2328;
+    --muted: #6b7280;
+    --accent: #1f5fff;
+    --accent-soft: #e8eeff;
+    --border: #e5e7eb;
+    --user-bg: #1f5fff;
+    --user-fg: #ffffff;
+    --assistant-bg: #ffffff;
+    --tool-bg: #fff8e6;
+    --tool-fg: #815c00;
+    --error: #b42318;
+    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh;
+  }
+
+  /* ---------- LOGIN VIEW ---------- */
+  .login-shell {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 1rem;
+  }
+  .login-card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 2rem;
+    width: 100%;
+    max-width: 360px;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.04);
+  }
+  .login-card h1 {
+    margin: 0 0 0.25rem;
+    font-size: 1.4rem;
+  }
+  .login-card p.sub {
+    color: var(--muted);
+    margin: 0 0 1.5rem;
+    font-size: 0.9rem;
+  }
+  .field { margin-bottom: 1rem; }
+  .field label {
+    display: block;
+    font-size: 0.85rem;
+    color: var(--muted);
+    margin-bottom: 0.35rem;
+  }
+  .field input {
+    width: 100%;
+    padding: 0.6rem 0.75rem;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-size: 0.95rem;
+    background: #fff;
+  }
+  .field input:focus {
+    outline: 2px solid var(--accent-soft);
+    border-color: var(--accent);
+  }
+  button.primary {
+    width: 100%;
+    padding: 0.65rem 1rem;
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    font-size: 0.95rem;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  button.primary:disabled { opacity: 0.6; cursor: progress; }
+  .login-error {
+    color: var(--error);
+    font-size: 0.85rem;
+    margin-top: 0.5rem;
+    min-height: 1.2em;
+  }
+
+  /* ---------- CHAT VIEW ---------- */
+  header.bar {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    padding: 0.75rem 1.25rem;
+    background: var(--panel);
+    border-bottom: 1px solid var(--border);
+  }
+  header.bar h1 {
+    margin: 0;
+    font-size: 1.05rem;
+    font-weight: 600;
+  }
+  header.bar .spacer { flex: 1; }
+  header.bar select, header.bar button {
+    font-size: 0.85rem;
+    padding: 0.4rem 0.7rem;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: #fff;
+    cursor: pointer;
+  }
+  header.bar button.ghost { background: transparent; }
+  header.bar a {
+    color: var(--muted);
+    text-decoration: none;
+    font-size: 0.85rem;
+  }
+  header.bar a:hover { color: var(--ink); }
+
+  /* source filter (laws OR municipalities) */
+  details.law-filter { position: relative; }
+  details.law-filter > summary {
+    list-style: none;
+    cursor: pointer;
+    padding: 0.4rem 0.7rem;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: #fff;
+    font-size: 0.85rem;
+    user-select: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+  }
+  details.law-filter > summary::-webkit-details-marker { display: none; }
+  details.law-filter > summary::after {
+    content: "▾";
+    color: var(--muted);
+    font-size: 0.75rem;
+  }
+  details.law-filter[open] > summary { border-color: var(--accent); }
+  .law-panel {
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0;
+    z-index: 20;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0.5rem;
+    width: 380px;
+    max-width: calc(100vw - 2rem);
+    box-shadow: 0 12px 24px rgba(0,0,0,0.08);
+  }
+  .mode-toggle {
+    display: flex;
+    gap: 0.25rem;
+    background: var(--bg);
+    padding: 0.2rem;
+    border-radius: 6px;
+    margin-bottom: 0.5rem;
+  }
+  .mode-toggle button {
+    flex: 1;
+    padding: 0.3rem 0.5rem;
+    background: transparent;
+    border: none;
+    border-radius: 5px;
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: var(--muted);
+    cursor: pointer;
+  }
+  .mode-toggle button.active {
+    background: var(--panel);
+    color: var(--ink);
+    box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+  }
+  .law-panel input[type="search"] {
+    width: 100%;
+    padding: 0.45rem 0.6rem;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-size: 0.85rem;
+  }
+  .law-panel input[type="search"]:focus {
+    outline: 2px solid var(--accent-soft);
+    border-color: var(--accent);
+  }
+  .law-panel .law-list {
+    max-height: 280px;
+    overflow-y: auto;
+    margin-top: 0.5rem;
+    border-top: 1px solid var(--border);
+    padding-top: 0.4rem;
+  }
+  .law-panel .law-list label {
+    display: flex;
+    gap: 0.5rem;
+    align-items: flex-start;
+    padding: 0.3rem 0.4rem;
+    font-size: 0.85rem;
+    border-radius: 4px;
+    cursor: pointer;
+    line-height: 1.3;
+  }
+  .law-panel .law-list label:hover { background: var(--accent-soft); }
+  .law-panel .law-list label input { margin-top: 0.2rem; }
+  .law-panel .law-list .law-num {
+    color: var(--muted);
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.78rem;
+    margin-right: 0.35rem;
+  }
+  .law-panel .law-list .empty {
+    color: var(--muted);
+    font-size: 0.82rem;
+    padding: 0.5rem 0.4rem;
+  }
+  .law-list .muni-block {
+    border-bottom: 1px dashed var(--border);
+    padding-bottom: 0.3rem;
+    margin-bottom: 0.3rem;
+  }
+  .law-list .muni-block:last-child { border-bottom: none; margin-bottom: 0; }
+  .law-list .muni-block .muni-row {
+    font-weight: 600;
+    color: var(--ink);
+  }
+  .law-list .docs-under {
+    margin-left: 1.4rem;
+  }
+  .law-list .docs-under label {
+    color: var(--muted);
+    font-size: 0.82rem;
+  }
+  .law-list .docs-under .source-tag {
+    font-size: 0.7rem;
+    padding: 0.05rem 0.3rem;
+    border-radius: 4px;
+    background: var(--bg);
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin-left: 0.3rem;
+  }
+  .law-panel .panel-actions {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 0.5rem;
+    padding-top: 0.5rem;
+    border-top: 1px solid var(--border);
+  }
+  .law-panel .panel-actions button {
+    font-size: 0.8rem;
+    padding: 0.3rem 0.6rem;
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    cursor: pointer;
+  }
+  .law-panel .panel-actions button.primary {
+    background: var(--accent);
+    color: #fff;
+    border-color: var(--accent);
+  }
+
+  main.chat {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    max-width: 880px;
+    width: 100%;
+    margin: 0 auto;
+    padding: 1rem 1.25rem 0;
+    overflow: hidden;
+  }
+  .messages {
+    flex: 1;
+    overflow-y: auto;
+    padding-bottom: 1rem;
+  }
+  .message {
+    margin-bottom: 1rem;
+    display: flex;
+    flex-direction: column;
+  }
+  .message.user { align-items: flex-end; }
+  .message.assistant { align-items: flex-start; }
+
+  .bubble {
+    max-width: 88%;
+    padding: 0.7rem 0.95rem;
+    border-radius: 14px;
+    line-height: 1.45;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    font-size: 0.95rem;
+  }
+  .message.user .bubble {
+    background: var(--user-bg);
+    color: var(--user-fg);
+    border-bottom-right-radius: 4px;
+  }
+  .message.assistant .bubble {
+    background: var(--assistant-bg);
+    border: 1px solid var(--border);
+    border-bottom-left-radius: 4px;
+  }
+  .tool-line {
+    font-size: 0.8rem;
+    color: var(--tool-fg);
+    background: var(--tool-bg);
+    border: 1px solid #f1d77b;
+    border-radius: 8px;
+    padding: 0.35rem 0.6rem;
+    margin: 0.4rem 0;
+    align-self: flex-start;
+    max-width: 88%;
+  }
+  .tool-line code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .citation {
+    font-weight: 600;
+    color: var(--accent);
+  }
+  .empty-state {
+    text-align: center;
+    color: var(--muted);
+    margin-top: 4rem;
+    font-size: 0.95rem;
+  }
+  .empty-state code {
+    background: var(--accent-soft);
+    padding: 0.1rem 0.3rem;
+    border-radius: 4px;
+  }
+
+  form.composer {
+    display: flex;
+    gap: 0.5rem;
+    padding: 0.75rem 0 1rem;
+    border-top: 1px solid var(--border);
+    background: var(--bg);
+  }
+  form.composer textarea {
+    flex: 1;
+    resize: none;
+    padding: 0.7rem 0.9rem;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    font-size: 0.95rem;
+    font-family: inherit;
+    min-height: 44px;
+    max-height: 180px;
+    line-height: 1.4;
+    background: #fff;
+  }
+  form.composer textarea:focus {
+    outline: 2px solid var(--accent-soft);
+    border-color: var(--accent);
+  }
+  form.composer button {
+    padding: 0 1.1rem;
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    border-radius: 10px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  form.composer button:disabled { opacity: 0.5; cursor: progress; }
+
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+
+<!-- LOGIN -->
+<div id="login-view" class="hidden login-shell">
+  <div class="login-card">
+    <h1>SocialLegal</h1>
+    <p class="sub">Icelandic legal research assistant</p>
+    <form id="login-form" autocomplete="on">
+      <div class="field">
+        <label for="username">Username</label>
+        <input id="username" name="username" type="text" autocomplete="username" required />
+      </div>
+      <div class="field">
+        <label for="password">Password</label>
+        <input id="password" name="password" type="password" autocomplete="current-password" required />
+      </div>
+      <button class="primary" type="submit" id="login-btn">Sign in</button>
+      <div class="login-error" id="login-error"></div>
+    </form>
+  </div>
+</div>
+
+<!-- CHAT -->
+<div id="chat-view" class="hidden" style="display:flex;flex-direction:column;flex:1;min-height:0;">
+  <header class="bar">
+    <h1>SocialLegal</h1>
+    <details class="law-filter" id="law-filter">
+      <summary id="law-filter-summary">All laws</summary>
+      <div class="law-panel" role="dialog" aria-label="Filter source">
+        <div class="mode-toggle" role="tablist">
+          <button type="button" id="mode-laws" class="active" role="tab">Laws</button>
+          <button type="button" id="mode-munis" role="tab">Municipalities</button>
+        </div>
+        <input type="search" id="law-search" placeholder="Search…" autocomplete="off" />
+        <div class="law-list" id="law-list" role="group" aria-label="Available sources"></div>
+        <div class="panel-actions">
+          <button type="button" id="law-clear">Clear</button>
+          <button type="button" id="law-apply" class="primary">Done</button>
+        </div>
+      </div>
+    </details>
+    <button class="ghost" id="new-chat">New conversation</button>
+    <span class="spacer"></span>
+    <span id="user-label" style="color:var(--muted);font-size:0.85rem;"></span>
+    <a href="/admin/ingest">Ingest</a>
+    <a href="/logout">Log out</a>
+  </header>
+  <main class="chat">
+    <div class="messages" id="messages"></div>
+    <form class="composer" id="composer">
+      <textarea id="input" placeholder="Spurðu um íslensk lög… / Ask about Icelandic law…" rows="1"></textarea>
+      <button type="submit" id="send-btn">Send</button>
+    </form>
+  </main>
+</div>
+
+<script>
+const STORAGE_KEY = "sociallegal:conversation:v1";
+
+function isLoginPath() {
+  return window.location.pathname.replace(/\/+$/, "") === "/login";
+}
+
+function show(viewId) {
+  document.getElementById("login-view").classList.add("hidden");
+  document.getElementById("chat-view").classList.add("hidden");
+  document.getElementById(viewId).classList.remove("hidden");
+}
+
+// ---------------- LOGIN ----------------
+async function setupLogin() {
+  show("login-view");
+  const form = document.getElementById("login-form");
+  const errEl = document.getElementById("login-error");
+  const btn = document.getElementById("login-btn");
+
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    errEl.textContent = "";
+    btn.disabled = true;
+    const fd = new FormData(form);
+    try {
+      const r = await fetch("/login", { method: "POST", body: fd });
+      if (r.ok) {
+        window.location.href = "/";
+        return;
+      }
+      const data = await r.json().catch(() => ({}));
+      errEl.textContent = data.detail || "Sign-in failed.";
+    } catch (e) {
+      errEl.textContent = "Network error.";
+    } finally {
+      btn.disabled = false;
+    }
+  });
+}
+
+// ---------------- CHAT ----------------
+let conversation = [];
+
+function loadConversation() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (raw) conversation = JSON.parse(raw);
+  } catch {}
+}
+function saveConversation() {
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(conversation)); } catch {}
+}
+
+function renderConversation() {
+  const root = document.getElementById("messages");
+  root.innerHTML = "";
+  if (conversation.length === 0) {
+    const el = document.createElement("div");
+    el.className = "empty-state";
+    el.innerHTML = "Start a conversation. Try: <em>“Hvað segja lögin um lágmarksiðgjald í lífeyrissjóð?”</em>";
+    root.appendChild(el);
+    return;
+  }
+  for (const msg of conversation) {
+    appendMessage(msg.role, msg.content, { tools: msg.tools });
+  }
+  root.scrollTop = root.scrollHeight;
+}
+
+function appendMessage(role, text, opts = {}) {
+  const root = document.getElementById("messages");
+  const wrap = document.createElement("div");
+  wrap.className = "message " + role;
+
+  if (opts.tools && opts.tools.length) {
+    for (const t of opts.tools) {
+      const tl = document.createElement("div");
+      tl.className = "tool-line";
+      tl.innerHTML = `<code>${escapeHtml(t.name)}</code> ${escapeHtml(summarizeArgs(t.args))}`;
+      wrap.appendChild(tl);
+    }
+  }
+
+  const bubble = document.createElement("div");
+  bubble.className = "bubble";
+  bubble.innerHTML = formatContent(text || "");
+  wrap.appendChild(bubble);
+  root.appendChild(wrap);
+  root.scrollTop = root.scrollHeight;
+  return { wrap, bubble };
+}
+
+function escapeHtml(s) {
+  return String(s ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
+}
+
+function summarizeArgs(args) {
+  if (!args) return "";
+  try {
+    const parts = [];
+    for (const [k, v] of Object.entries(args)) {
+      if (v === null || v === undefined || v === "") continue;
+      const sv = typeof v === "string" ? `"${v}"` : JSON.stringify(v);
+      parts.push(`${k}=${sv}`);
+    }
+    return parts.join(" ");
+  } catch { return ""; }
+}
+
+function formatContent(text) {
+  // Highlight legal citations like "Lög nr. 129/1997, II. kafli, 7. gr." or "Act 129/1997"
+  let html = escapeHtml(text);
+  html = html.replace(
+    /(L[öo]g\s*nr\.\s*\d+\/\d{4}(?:,\s*[IVXLCDM]+\.\s*kafli)?(?:,\s*\d+[a-z]?\.\s*gr\.)?)/gi,
+    '<span class="citation">$1</span>'
+  );
+  html = html.replace(
+    /(Act\s+\d+\/\d{4}(?:,\s*ch\.\s*[IVXLCDM]+)?(?:,\s*art\.\s*\d+[a-z]?)?)/gi,
+    '<span class="citation">$1</span>'
+  );
+  return html;
+}
+
+// ---------------- SOURCE FILTER (laws OR municipalities) ----------------
+const sourceFilter = {
+  mode: "laws", // "laws" | "munis"
+  laws: [],            // [{id, law_number, title}, ...]
+  municipalities: [],  // [{id, name}, ...]
+  documents: [],       // [{id, name, source_type, municipality_id, municipality_name}, ...]
+  selectedLaws: new Set(),
+  selectedMunis: new Set(),
+  selectedDocs: new Set(),
+};
+
+const FILTER_KEY = "sociallegal:source-filter:v2";
+
+function persistFilter() {
+  try {
+    localStorage.setItem(FILTER_KEY, JSON.stringify({
+      mode: sourceFilter.mode,
+      laws: [...sourceFilter.selectedLaws],
+      munis: [...sourceFilter.selectedMunis],
+      docs: [...sourceFilter.selectedDocs],
+    }));
+  } catch {}
+}
+function restoreFilter() {
+  try {
+    const raw = localStorage.getItem(FILTER_KEY);
+    if (!raw) return;
+    const s = JSON.parse(raw);
+    if (s && (s.mode === "laws" || s.mode === "munis")) sourceFilter.mode = s.mode;
+    if (Array.isArray(s.laws)) sourceFilter.selectedLaws = new Set(s.laws.map(Number));
+    if (Array.isArray(s.munis)) sourceFilter.selectedMunis = new Set(s.munis.map(Number));
+    if (Array.isArray(s.docs)) sourceFilter.selectedDocs = new Set(s.docs.map(Number));
+  } catch {}
+}
+
+function updateFilterSummary() {
+  const summary = document.getElementById("law-filter-summary");
+  if (sourceFilter.mode === "laws") {
+    const n = sourceFilter.selectedLaws.size;
+    if (n === 0) summary.textContent = "All laws";
+    else if (n === 1) {
+      const id = [...sourceFilter.selectedLaws][0];
+      const law = sourceFilter.laws.find(l => l.id === id);
+      summary.textContent = law ? `${law.law_number}` : "1 law";
+    } else summary.textContent = `${n} laws`;
+  } else {
+    const nm = sourceFilter.selectedMunis.size;
+    const nd = sourceFilter.selectedDocs.size;
+    if (nm === 0 && nd === 0) summary.textContent = "All municipalities";
+    else if (nm === 1 && nd === 0) {
+      const m = sourceFilter.municipalities.find(x => x.id === [...sourceFilter.selectedMunis][0]);
+      summary.textContent = m ? m.name : "1 municipality";
+    } else if (nm === 0 && nd === 1) {
+      const d = sourceFilter.documents.find(x => x.id === [...sourceFilter.selectedDocs][0]);
+      summary.textContent = d ? d.name : "1 document";
+    } else summary.textContent = `${nm + nd} selected`;
+  }
+}
+
+function _matches(text, q) {
+  return !q || (text || "").toLowerCase().includes(q);
+}
+
+function renderLawsMode(filterText) {
+  const list = document.getElementById("law-list");
+  list.innerHTML = "";
+  const q = filterText.trim().toLowerCase();
+  const matches = sourceFilter.laws.filter(l =>
+    _matches(l.law_number, q) || _matches(l.title, q));
+  if (matches.length === 0) {
+    const e = document.createElement("div");
+    e.className = "empty";
+    e.textContent = sourceFilter.laws.length === 0 ? "No laws ingested yet." : "No matches.";
+    list.appendChild(e);
+    return;
+  }
+  for (const l of matches) {
+    const label = document.createElement("label");
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.value = String(l.id);
+    cb.checked = sourceFilter.selectedLaws.has(l.id);
+    cb.addEventListener("change", () => {
+      if (cb.checked) sourceFilter.selectedLaws.add(l.id);
+      else sourceFilter.selectedLaws.delete(l.id);
+      updateFilterSummary();
+      persistFilter();
+    });
+    const meta = document.createElement("span");
+    meta.innerHTML = `<span class="law-num">${escapeHtml(l.law_number)}</span>${escapeHtml(l.title || "")}`;
+    label.appendChild(cb);
+    label.appendChild(meta);
+    list.appendChild(label);
+  }
+}
+
+function renderMunisMode(filterText) {
+  const list = document.getElementById("law-list");
+  list.innerHTML = "";
+  const q = filterText.trim().toLowerCase();
+
+  // Group docs by municipality
+  const docsByMuni = new Map();
+  for (const d of sourceFilter.documents) {
+    const key = d.municipality_id ?? null;
+    if (!docsByMuni.has(key)) docsByMuni.set(key, []);
+    docsByMuni.get(key).push(d);
+  }
+
+  // Build groups: known municipalities first (in order), then a "(no municipality)" bucket.
+  const groups = sourceFilter.municipalities.map(m => ({
+    muni: m,
+    docs: docsByMuni.get(m.id) || [],
+  }));
+  const stray = docsByMuni.get(null) || [];
+  if (stray.length) groups.push({ muni: null, docs: stray });
+
+  // Filter groups by search
+  let anyMatch = false;
+  for (const g of groups) {
+    const muniMatches = g.muni ? _matches(g.muni.name, q) : _matches("(no municipality)", q);
+    const matchedDocs = g.docs.filter(d => _matches(d.name, q));
+    if (!muniMatches && matchedDocs.length === 0) continue;
+    anyMatch = true;
+
+    const block = document.createElement("div");
+    block.className = "muni-block";
+
+    if (g.muni) {
+      const muniLabel = document.createElement("label");
+      muniLabel.className = "muni-row";
+      const cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.checked = sourceFilter.selectedMunis.has(g.muni.id);
+      cb.addEventListener("change", () => {
+        if (cb.checked) sourceFilter.selectedMunis.add(g.muni.id);
+        else sourceFilter.selectedMunis.delete(g.muni.id);
+        updateFilterSummary();
+        persistFilter();
+      });
+      const text = document.createElement("span");
+      text.textContent = g.muni.name;
+      muniLabel.appendChild(cb);
+      muniLabel.appendChild(text);
+      block.appendChild(muniLabel);
+    } else {
+      const heading = document.createElement("div");
+      heading.className = "muni-row";
+      heading.style.padding = "0.3rem 0.4rem";
+      heading.textContent = "(no municipality)";
+      block.appendChild(heading);
+    }
+
+    const visibleDocs = q ? matchedDocs : g.docs;
+    if (visibleDocs.length) {
+      const docsWrap = document.createElement("div");
+      docsWrap.className = "docs-under";
+      for (const d of visibleDocs) {
+        const label = document.createElement("label");
+        const cb = document.createElement("input");
+        cb.type = "checkbox";
+        cb.checked = sourceFilter.selectedDocs.has(d.id);
+        cb.addEventListener("change", () => {
+          if (cb.checked) sourceFilter.selectedDocs.add(d.id);
+          else sourceFilter.selectedDocs.delete(d.id);
+          updateFilterSummary();
+          persistFilter();
+        });
+        const text = document.createElement("span");
+        text.innerHTML = `${escapeHtml(d.name)}<span class="source-tag">${escapeHtml(d.source_type || "")}</span>`;
+        label.appendChild(cb);
+        label.appendChild(text);
+        docsWrap.appendChild(label);
+      }
+      block.appendChild(docsWrap);
+    }
+    list.appendChild(block);
+  }
+
+  if (!anyMatch) {
+    const e = document.createElement("div");
+    e.className = "empty";
+    if (sourceFilter.municipalities.length === 0 && sourceFilter.documents.length === 0) {
+      e.textContent = "No municipalities or documents yet.";
+    } else {
+      e.textContent = "No matches.";
+    }
+    list.appendChild(e);
+  }
+}
+
+function renderFilterList(filterText = "") {
+  document.getElementById("mode-laws").classList.toggle("active", sourceFilter.mode === "laws");
+  document.getElementById("mode-munis").classList.toggle("active", sourceFilter.mode === "munis");
+  if (sourceFilter.mode === "laws") renderLawsMode(filterText);
+  else renderMunisMode(filterText);
+}
+
+async function loadCatalog() {
+  try {
+    const [lawsR, munisR, docsR] = await Promise.all([
+      fetch("/laws"), fetch("/municipalities"), fetch("/documents"),
+    ]);
+    if (lawsR.ok) sourceFilter.laws = (await lawsR.json()) || [];
+    if (munisR.ok) sourceFilter.municipalities = (await munisR.json()) || [];
+    if (docsR.ok) sourceFilter.documents = (await docsR.json()) || [];
+  } catch {}
+  // Drop persisted ids that no longer exist
+  const validLaws = new Set(sourceFilter.laws.map(l => l.id));
+  const validMunis = new Set(sourceFilter.municipalities.map(m => m.id));
+  const validDocs = new Set(sourceFilter.documents.map(d => d.id));
+  for (const id of [...sourceFilter.selectedLaws]) if (!validLaws.has(id)) sourceFilter.selectedLaws.delete(id);
+  for (const id of [...sourceFilter.selectedMunis]) if (!validMunis.has(id)) sourceFilter.selectedMunis.delete(id);
+  for (const id of [...sourceFilter.selectedDocs]) if (!validDocs.has(id)) sourceFilter.selectedDocs.delete(id);
+  persistFilter();
+  renderFilterList();
+  updateFilterSummary();
+}
+
+function setupLawFilterControls() {
+  const search = document.getElementById("law-search");
+  const clear = document.getElementById("law-clear");
+  const apply = document.getElementById("law-apply");
+  const details = document.getElementById("law-filter");
+  const lawsBtn = document.getElementById("mode-laws");
+  const munisBtn = document.getElementById("mode-munis");
+
+  search.addEventListener("input", () => renderFilterList(search.value));
+  clear.addEventListener("click", () => {
+    if (sourceFilter.mode === "laws") sourceFilter.selectedLaws.clear();
+    else { sourceFilter.selectedMunis.clear(); sourceFilter.selectedDocs.clear(); }
+    persistFilter();
+    updateFilterSummary();
+    renderFilterList(search.value);
+  });
+  apply.addEventListener("click", () => { details.removeAttribute("open"); });
+  lawsBtn.addEventListener("click", () => {
+    sourceFilter.mode = "laws";
+    persistFilter();
+    renderFilterList(search.value);
+    updateFilterSummary();
+  });
+  munisBtn.addEventListener("click", () => {
+    sourceFilter.mode = "munis";
+    persistFilter();
+    renderFilterList(search.value);
+    updateFilterSummary();
+  });
+
+  // Click outside the panel closes it.
+  document.addEventListener("click", (e) => {
+    if (!details.hasAttribute("open")) return;
+    if (!details.contains(e.target)) details.removeAttribute("open");
+  });
+}
+
+function currentFilterPayload() {
+  if (sourceFilter.mode === "laws") {
+    return {
+      law_ids: sourceFilter.selectedLaws.size ? [...sourceFilter.selectedLaws] : null,
+      municipality_ids: null,
+      document_ids: null,
+    };
+  }
+  return {
+    law_ids: null,
+    municipality_ids: sourceFilter.selectedMunis.size ? [...sourceFilter.selectedMunis] : null,
+    document_ids: sourceFilter.selectedDocs.size ? [...sourceFilter.selectedDocs] : null,
+  };
+}
+
+async function setupChat() {
+  // Verify auth and populate user label
+  try {
+    const r = await fetch("/me");
+    if (!r.ok) {
+      window.location.href = "/login";
+      return;
+    }
+    const me = await r.json();
+    document.getElementById("user-label").textContent = me.username;
+  } catch {
+    window.location.href = "/login";
+    return;
+  }
+
+  show("chat-view");
+  restoreFilter();
+  await loadCatalog();
+  setupLawFilterControls();
+  loadConversation();
+  renderConversation();
+
+  const form = document.getElementById("composer");
+  const input = document.getElementById("input");
+  const sendBtn = document.getElementById("send-btn");
+  const newBtn = document.getElementById("new-chat");
+
+  newBtn.addEventListener("click", () => {
+    if (!confirm("Start a new conversation? Current history will be cleared.")) return;
+    conversation = [];
+    saveConversation();
+    renderConversation();
+  });
+
+  input.addEventListener("input", () => {
+    input.style.height = "auto";
+    input.style.height = Math.min(input.scrollHeight, 180) + "px";
+  });
+
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      form.requestSubmit();
+    }
+  });
+
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const text = input.value.trim();
+    if (!text) return;
+    input.value = "";
+    input.style.height = "auto";
+    sendBtn.disabled = true;
+
+    conversation.push({ role: "user", content: text });
+    appendMessage("user", text);
+    saveConversation();
+
+    const filterPayload = currentFilterPayload();
+    const assistantMsg = { role: "assistant", content: "", tools: [] };
+    conversation.push(assistantMsg);
+    const { wrap, bubble } = appendMessage("assistant", "", { tools: [] });
+
+    try {
+      await streamChat(text, filterPayload, (event, data) => {
+        const msgRoot = document.getElementById("messages");
+        if (event === "token") {
+          assistantMsg.content += data.text || "";
+          bubble.innerHTML = formatContent(assistantMsg.content);
+          msgRoot.scrollTop = msgRoot.scrollHeight;
+        } else if (event === "tool") {
+          assistantMsg.tools.push({ name: data.name, args: data.args });
+          const tl = document.createElement("div");
+          tl.className = "tool-line";
+          tl.innerHTML = `<code>${escapeHtml(data.name)}</code> ${escapeHtml(summarizeArgs(data.args))}`;
+          wrap.insertBefore(tl, bubble);
+          msgRoot.scrollTop = msgRoot.scrollHeight;
+        } else if (event === "tool_result") {
+          // tool line already rendered; nothing to do
+        } else if (event === "error") {
+          assistantMsg.content += `\n\n[error: ${data.error}]`;
+          bubble.innerHTML = formatContent(assistantMsg.content);
+        }
+      });
+    } catch (err) {
+      assistantMsg.content += `\n\n[network error: ${err.message}]`;
+      bubble.innerHTML = formatContent(assistantMsg.content);
+    } finally {
+      saveConversation();
+      sendBtn.disabled = false;
+      input.focus();
+    }
+  });
+
+  input.focus();
+}
+
+async function streamChat(message, filterPayload, onEvent) {
+  const body = { message, ...(filterPayload || {}) };
+  const r = await fetch("/chat", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) throw new Error("HTTP " + r.status);
+  const reader = r.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = "";
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    let idx;
+    while ((idx = buf.indexOf("\n\n")) !== -1) {
+      const block = buf.slice(0, idx);
+      buf = buf.slice(idx + 2);
+      const ev = parseSseBlock(block);
+      if (ev) onEvent(ev.event, ev.data);
+    }
+  }
+}
+
+function parseSseBlock(block) {
+  let event = "message";
+  let dataLines = [];
+  for (const line of block.split("\n")) {
+    if (line.startsWith("event:")) event = line.slice(6).trim();
+    else if (line.startsWith("data:")) dataLines.push(line.slice(5).trim());
+  }
+  if (dataLines.length === 0) return { event, data: {} };
+  const raw = dataLines.join("\n");
+  try { return { event, data: JSON.parse(raw) }; }
+  catch { return { event, data: { text: raw } }; }
+}
+
+// ---------------- BOOT ----------------
+if (isLoginPath()) {
+  setupLogin();
+} else {
+  setupChat();
+}
+</script>
+</body>
+</html>

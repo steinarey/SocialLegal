@@ -2,7 +2,10 @@
   "permissions": {
     "allow": [
       "WebFetch(domain:www.althingi.is)",
-      "Bash(python *)"
+      "Bash(python *)",
+      "WebFetch(domain:island.is)",
+      "Bash(curl -sL -A \"Mozilla/5.0\" https://island.is/reglugerdir/nr/1490-2025 -o /tmp/reg_1490_2025.html)",
+      "Read(//tmp/**)"
     ]
   }
 }

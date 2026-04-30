@@ -605,6 +605,207 @@ def _resolve_law_refs(to_law_url: str, refs: list[tuple]) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
+# Regulations (island.is /reglugerdir/nr/<num>-<year>)
+# ---------------------------------------------------------------------------
+
+REGULATION_URL_RE = re.compile(
+    r"^https?://(?:www\.)?island\.is/reglugerdir/nr/(\d+)-(\d{4})/?$",
+    re.IGNORECASE,
+)
+REGULATION_ARTICLE_HEADING_RE = re.compile(
+    r"^(\d+)\s*\.?\s*gr\.\s*(.*?)\s*$",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+@dataclass
+class ParsedRegulationArticle:
+    number: str
+    title: str
+    body: str
+    ordinal: int
+
+
+@dataclass
+class ParsedRegulation:
+    regulation_number: str
+    title: str
+    url: str
+    articles: list[ParsedRegulationArticle] = field(default_factory=list)
+
+
+def _regulation_number_from_url(url: str) -> str | None:
+    m = REGULATION_URL_RE.match(url.strip())
+    if not m:
+        return None
+    return f"{int(m.group(1))}/{m.group(2)}"
+
+
+def _parse_regulation_article_heading(raw: str) -> tuple[str, str]:
+    """Heading text like "1. gr." or "1. gr. Gildissvið, markmið og framkvæmd." → (number, title)."""
+    cleaned = _strip_amendment_brackets(raw)
+    m = REGULATION_ARTICLE_HEADING_RE.match(cleaned)
+    if not m:
+        return cleaned.rstrip(".").strip(), ""
+    number = m.group(1)
+    title = m.group(2).strip().rstrip(".").strip()
+    return number, title
+
+
+def parse_regulation(html: str, url: str) -> ParsedRegulation:
+    soup = BeautifulSoup(html, "lxml")
+
+    h1 = soup.find("h1")
+    title = h1.get_text(" ", strip=True) if h1 else ""
+    title = title.rstrip(".").strip() or url
+
+    regulation_number = _regulation_number_from_url(url) or ""
+
+    parsed = ParsedRegulation(regulation_number=regulation_number, title=title, url=url)
+
+    first_heading = soup.find("h3", class_="article__title")
+    if first_heading is None:
+        return parsed
+    container = first_heading.parent
+
+    current: ParsedRegulationArticle | None = None
+    ordinal_counter = 0
+
+    def commit(art: ParsedRegulationArticle | None) -> None:
+        if art is None:
+            return
+        art.body = _clean_body(art.body)
+        if art.body or art.title:
+            parsed.articles.append(art)
+
+    for child in list(container.children):
+        if isinstance(child, NavigableString):
+            if current is not None:
+                current.body += str(child)
+            continue
+        if not isinstance(child, Tag):
+            continue
+        classes = child.get("class") or []
+        if child.name == "h3" and "article__title" in classes:
+            commit(current)
+            ordinal_counter += 1
+            number, art_title = _parse_regulation_article_heading(
+                child.get_text(" ", strip=True)
+            )
+            current = ParsedRegulationArticle(
+                number=number,
+                title=art_title,
+                body="",
+                ordinal=ordinal_counter,
+            )
+            continue
+        if current is None:
+            continue
+        text = child.get_text(" ", strip=False)
+        if child.name in ("p", "ol", "ul", "div", "blockquote", "table"):
+            current.body += text + "\n"
+        else:
+            current.body += text
+
+    commit(current)
+    return parsed
+
+
+def _regulation_article_embedding_text(
+    reg: ParsedRegulation, art: ParsedRegulationArticle
+) -> str:
+    parts = [reg.title, f"{art.number}. gr."]
+    if art.title:
+        parts.append(art.title)
+    return " | ".join(parts) + "\n" + art.body
+
+
+def regulation_url_already_ingested(url: str) -> bool:
+    with conn() as c, c.cursor() as cur:
+        cur.execute("SELECT 1 FROM regulations WHERE url = %s", (url,))
+        return cur.fetchone() is not None
+
+
+def store_regulation(parsed: ParsedRegulation) -> int:
+    article_texts = [
+        _regulation_article_embedding_text(parsed, a) for a in parsed.articles
+    ]
+    embeddings = embed_texts(article_texts)
+
+    with conn() as c:
+        register_vector(c)
+        with c.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO regulations (regulation_number, title, url)
+                VALUES (%s, %s, %s) RETURNING id
+                """,
+                (parsed.regulation_number, parsed.title, parsed.url),
+            )
+            regulation_id = cur.fetchone()[0]
+
+            for art, emb in zip(parsed.articles, embeddings):
+                cur.execute(
+                    """
+                    INSERT INTO regulation_articles
+                        (regulation_id, number, title, content, ordinal, embedding)
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                    """,
+                    (regulation_id, art.number, art.title, art.body, art.ordinal, emb),
+                )
+        c.commit()
+    return regulation_id
+
+
+def ingest_regulation_url(url: str) -> dict:
+    if regulation_url_already_ingested(url):
+        return {"url": url, "status": "skipped"}
+    if not _regulation_number_from_url(url):
+        return {
+            "url": url,
+            "status": "error",
+            "error": "URL does not look like https://island.is/reglugerdir/nr/<num>-<year>",
+        }
+    html = fetch(url)
+    parsed = parse_regulation(html, url)
+    if not parsed.articles:
+        return {"url": url, "status": "error", "error": "no articles parsed"}
+    regulation_id = store_regulation(parsed)
+    return {
+        "url": url,
+        "status": "ingested",
+        "regulation_id": regulation_id,
+        "regulation_number": parsed.regulation_number,
+        "title": parsed.title,
+        "articles": len(parsed.articles),
+    }
+
+
+def ingest_regulation_urls(urls: list[str]) -> list[dict]:
+    results: list[dict] = []
+    for raw in urls:
+        url = raw.strip()
+        if not url:
+            continue
+        try:
+            results.append(ingest_regulation_url(url))
+        except Exception as e:
+            results.append({"url": url, "status": "error", "error": str(e)})
+    return results
+
+
+def list_regulations() -> list[dict]:
+    with conn() as c, c.cursor() as cur:
+        cur.execute(
+            "SELECT id, regulation_number, title FROM regulations ORDER BY regulation_number"
+        )
+        return [
+            {"id": r[0], "regulation_number": r[1], "title": r[2]}
+            for r in cur.fetchall()
+        ]
+
+
+# ---------------------------------------------------------------------------
 # Generic document ingestion (PDF / TXT / HTML)
 # ---------------------------------------------------------------------------
 

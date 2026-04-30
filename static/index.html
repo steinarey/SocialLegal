@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>SocialLegal — Icelandic legal RAG</title>
+<title>SocialLegal — Íslensk lagaleg leit</title>
 <style>
   :root {
     --bg: #f7f7f5;
@@ -388,17 +388,17 @@
 <div id="login-view" class="hidden login-shell">
   <div class="login-card">
     <h1>SocialLegal</h1>
-    <p class="sub">Icelandic legal research assistant</p>
+    <p class="sub">Lögfræðiaðstoð fyrir félagsráðgjafa</p>
     <form id="login-form" autocomplete="on">
       <div class="field">
-        <label for="username">Username</label>
+        <label for="username">Notandanafn</label>
         <input id="username" name="username" type="text" autocomplete="username" required />
       </div>
       <div class="field">
-        <label for="password">Password</label>
+        <label for="password">Lykilorð</label>
         <input id="password" name="password" type="password" autocomplete="current-password" required />
       </div>
-      <button class="primary" type="submit" id="login-btn">Sign in</button>
+      <button class="primary" type="submit" id="login-btn">Skrá inn</button>
       <div class="login-error" id="login-error"></div>
     </form>
   </div>
@@ -409,31 +409,32 @@
   <header class="bar">
     <h1>SocialLegal</h1>
     <details class="law-filter" id="law-filter">
-      <summary id="law-filter-summary">All laws</summary>
-      <div class="law-panel" role="dialog" aria-label="Filter source">
+      <summary id="law-filter-summary">Öll lög</summary>
+      <div class="law-panel" role="dialog" aria-label="Sía heimildir">
         <div class="mode-toggle" role="tablist">
-          <button type="button" id="mode-laws" class="active" role="tab">Laws</button>
-          <button type="button" id="mode-munis" role="tab">Municipalities</button>
+          <button type="button" id="mode-laws" class="active" role="tab">Lög</button>
+          <button type="button" id="mode-regs" role="tab">Reglugerðir</button>
+          <button type="button" id="mode-munis" role="tab">Sveitarfélög</button>
         </div>
-        <input type="search" id="law-search" placeholder="Search…" autocomplete="off" />
-        <div class="law-list" id="law-list" role="group" aria-label="Available sources"></div>
+        <input type="search" id="law-search" placeholder="Leita…" autocomplete="off" />
+        <div class="law-list" id="law-list" role="group" aria-label="Tiltækar heimildir"></div>
         <div class="panel-actions">
-          <button type="button" id="law-clear">Clear</button>
-          <button type="button" id="law-apply" class="primary">Done</button>
+          <button type="button" id="law-clear">Hreinsa</button>
+          <button type="button" id="law-apply" class="primary">Lokið</button>
         </div>
       </div>
     </details>
-    <button class="ghost" id="new-chat">New conversation</button>
+    <button class="ghost" id="new-chat">Nýtt samtal</button>
     <span class="spacer"></span>
     <span id="user-label" style="color:var(--muted);font-size:0.85rem;"></span>
-    <a href="/admin/ingest">Ingest</a>
-    <a href="/logout">Log out</a>
+    <a href="/admin/ingest">Skrá gögn</a>
+    <a href="/logout">Skrá út</a>
   </header>
   <main class="chat">
     <div class="messages" id="messages"></div>
     <form class="composer" id="composer">
-      <textarea id="input" placeholder="Spurðu um íslensk lög… / Ask about Icelandic law…" rows="1"></textarea>
-      <button type="submit" id="send-btn">Send</button>
+      <textarea id="input" placeholder="Spurðu um íslensk lög…" rows="1"></textarea>
+      <button type="submit" id="send-btn">Senda</button>
     </form>
   </main>
 </div>
@@ -470,9 +471,9 @@ async function setupLogin() {
         return;
       }
       const data = await r.json().catch(() => ({}));
-      errEl.textContent = data.detail || "Sign-in failed.";
+      errEl.textContent = data.detail || "Innskráning mistókst.";
     } catch (e) {
-      errEl.textContent = "Network error.";
+      errEl.textContent = "Netvilla.";
     } finally {
       btn.disabled = false;
     }
@@ -498,7 +499,7 @@ function renderConversation() {
   if (conversation.length === 0) {
     const el = document.createElement("div");
     el.className = "empty-state";
-    el.innerHTML = "Start a conversation. Try: <em>“Hvað segja lögin um lágmarksiðgjald í lífeyrissjóð?”</em>";
+    el.innerHTML = "Byrjaðu samtal. Prófaðu: <em>“Hvað segja lögin um lágmarksiðgjald í lífeyrissjóð?”</em>";
     root.appendChild(el);
     return;
   }
@@ -568,22 +569,25 @@ function formatContent(text) {
 
 // ---------------- SOURCE FILTER (laws OR municipalities) ----------------
 const sourceFilter = {
-  mode: "laws", // "laws" | "munis"
+  mode: "laws", // "laws" | "regs" | "munis"
   laws: [],            // [{id, law_number, title}, ...]
+  regulations: [],     // [{id, regulation_number, title}, ...]
   municipalities: [],  // [{id, name}, ...]
   documents: [],       // [{id, name, source_type, municipality_id, municipality_name}, ...]
   selectedLaws: new Set(),
+  selectedRegulations: new Set(),
   selectedMunis: new Set(),
   selectedDocs: new Set(),
 };
 
-const FILTER_KEY = "sociallegal:source-filter:v2";
+const FILTER_KEY = "sociallegal:source-filter:v3";
 
 function persistFilter() {
   try {
     localStorage.setItem(FILTER_KEY, JSON.stringify({
       mode: sourceFilter.mode,
       laws: [...sourceFilter.selectedLaws],
+      regs: [...sourceFilter.selectedRegulations],
       munis: [...sourceFilter.selectedMunis],
       docs: [...sourceFilter.selectedDocs],
     }));
@@ -594,8 +598,9 @@ function restoreFilter() {
     const raw = localStorage.getItem(FILTER_KEY);
     if (!raw) return;
     const s = JSON.parse(raw);
-    if (s && (s.mode === "laws" || s.mode === "munis")) sourceFilter.mode = s.mode;
+    if (s && (s.mode === "laws" || s.mode === "regs" || s.mode === "munis")) sourceFilter.mode = s.mode;
     if (Array.isArray(s.laws)) sourceFilter.selectedLaws = new Set(s.laws.map(Number));
+    if (Array.isArray(s.regs)) sourceFilter.selectedRegulations = new Set(s.regs.map(Number));
     if (Array.isArray(s.munis)) sourceFilter.selectedMunis = new Set(s.munis.map(Number));
     if (Array.isArray(s.docs)) sourceFilter.selectedDocs = new Set(s.docs.map(Number));
   } catch {}
@@ -605,23 +610,31 @@ function updateFilterSummary() {
   const summary = document.getElementById("law-filter-summary");
   if (sourceFilter.mode === "laws") {
     const n = sourceFilter.selectedLaws.size;
-    if (n === 0) summary.textContent = "All laws";
+    if (n === 0) summary.textContent = "Öll lög";
     else if (n === 1) {
       const id = [...sourceFilter.selectedLaws][0];
       const law = sourceFilter.laws.find(l => l.id === id);
-      summary.textContent = law ? `${law.law_number}` : "1 law";
-    } else summary.textContent = `${n} laws`;
+      summary.textContent = law ? `${law.law_number}` : "1 lög";
+    } else summary.textContent = `${n} lög`;
+  } else if (sourceFilter.mode === "regs") {
+    const n = sourceFilter.selectedRegulations.size;
+    if (n === 0) summary.textContent = "Allar reglugerðir";
+    else if (n === 1) {
+      const id = [...sourceFilter.selectedRegulations][0];
+      const reg = sourceFilter.regulations.find(r => r.id === id);
+      summary.textContent = reg ? `${reg.regulation_number}` : "1 reglugerð";
+    } else summary.textContent = `${n} reglugerðir`;
   } else {
     const nm = sourceFilter.selectedMunis.size;
     const nd = sourceFilter.selectedDocs.size;
-    if (nm === 0 && nd === 0) summary.textContent = "All municipalities";
+    if (nm === 0 && nd === 0) summary.textContent = "Öll sveitarfélög";
     else if (nm === 1 && nd === 0) {
       const m = sourceFilter.municipalities.find(x => x.id === [...sourceFilter.selectedMunis][0]);
-      summary.textContent = m ? m.name : "1 municipality";
+      summary.textContent = m ? m.name : "1 sveitarfélag";
     } else if (nm === 0 && nd === 1) {
       const d = sourceFilter.documents.find(x => x.id === [...sourceFilter.selectedDocs][0]);
-      summary.textContent = d ? d.name : "1 document";
-    } else summary.textContent = `${nm + nd} selected`;
+      summary.textContent = d ? d.name : "1 skjal";
+    } else summary.textContent = `${nm + nd} valin`;
   }
 }
 
@@ -638,7 +651,7 @@ function renderLawsMode(filterText) {
   if (matches.length === 0) {
     const e = document.createElement("div");
     e.className = "empty";
-    e.textContent = sourceFilter.laws.length === 0 ? "No laws ingested yet." : "No matches.";
+    e.textContent = sourceFilter.laws.length === 0 ? "Engin lög skráð enn." : "Engar leitarniðurstöður.";
     list.appendChild(e);
     return;
   }
@@ -656,6 +669,41 @@ function renderLawsMode(filterText) {
     });
     const meta = document.createElement("span");
     meta.innerHTML = `<span class="law-num">${escapeHtml(l.law_number)}</span>${escapeHtml(l.title || "")}`;
+    label.appendChild(cb);
+    label.appendChild(meta);
+    list.appendChild(label);
+  }
+}
+
+function renderRegulationsMode(filterText) {
+  const list = document.getElementById("law-list");
+  list.innerHTML = "";
+  const q = filterText.trim().toLowerCase();
+  const matches = sourceFilter.regulations.filter(r =>
+    _matches(r.regulation_number, q) || _matches(r.title, q));
+  if (matches.length === 0) {
+    const e = document.createElement("div");
+    e.className = "empty";
+    e.textContent = sourceFilter.regulations.length === 0
+      ? "Engar reglugerðir skráðar enn."
+      : "Engar leitarniðurstöður.";
+    list.appendChild(e);
+    return;
+  }
+  for (const r of matches) {
+    const label = document.createElement("label");
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.value = String(r.id);
+    cb.checked = sourceFilter.selectedRegulations.has(r.id);
+    cb.addEventListener("change", () => {
+      if (cb.checked) sourceFilter.selectedRegulations.add(r.id);
+      else sourceFilter.selectedRegulations.delete(r.id);
+      updateFilterSummary();
+      persistFilter();
+    });
+    const meta = document.createElement("span");
+    meta.innerHTML = `<span class="law-num">${escapeHtml(r.regulation_number)}</span>${escapeHtml(r.title || "")}`;
     label.appendChild(cb);
     label.appendChild(meta);
     list.appendChild(label);
@@ -686,7 +734,7 @@ function renderMunisMode(filterText) {
   // Filter groups by search
   let anyMatch = false;
   for (const g of groups) {
-    const muniMatches = g.muni ? _matches(g.muni.name, q) : _matches("(no municipality)", q);
+    const muniMatches = g.muni ? _matches(g.muni.name, q) : _matches("(ekkert sveitarfélag)", q);
     const matchedDocs = g.docs.filter(d => _matches(d.name, q));
     if (!muniMatches && matchedDocs.length === 0) continue;
     anyMatch = true;
@@ -715,7 +763,7 @@ function renderMunisMode(filterText) {
       const heading = document.createElement("div");
       heading.className = "muni-row";
       heading.style.padding = "0.3rem 0.4rem";
-      heading.textContent = "(no municipality)";
+      heading.textContent = "(ekkert sveitarfélag)";
       block.appendChild(heading);
     }
 
@@ -749,9 +797,9 @@ function renderMunisMode(filterText) {
     const e = document.createElement("div");
     e.className = "empty";
     if (sourceFilter.municipalities.length === 0 && sourceFilter.documents.length === 0) {
-      e.textContent = "No municipalities or documents yet.";
+      e.textContent = "Engin sveitarfélög eða skjöl enn.";
     } else {
-      e.textContent = "No matches.";
+      e.textContent = "Engar leitarniðurstöður.";
     }
     list.appendChild(e);
   }
@@ -759,25 +807,30 @@ function renderMunisMode(filterText) {
 
 function renderFilterList(filterText = "") {
   document.getElementById("mode-laws").classList.toggle("active", sourceFilter.mode === "laws");
+  document.getElementById("mode-regs").classList.toggle("active", sourceFilter.mode === "regs");
   document.getElementById("mode-munis").classList.toggle("active", sourceFilter.mode === "munis");
   if (sourceFilter.mode === "laws") renderLawsMode(filterText);
+  else if (sourceFilter.mode === "regs") renderRegulationsMode(filterText);
   else renderMunisMode(filterText);
 }
 
 async function loadCatalog() {
   try {
-    const [lawsR, munisR, docsR] = await Promise.all([
-      fetch("/laws"), fetch("/municipalities"), fetch("/documents"),
+    const [lawsR, regsR, munisR, docsR] = await Promise.all([
+      fetch("/laws"), fetch("/regulations"), fetch("/municipalities"), fetch("/documents"),
     ]);
     if (lawsR.ok) sourceFilter.laws = (await lawsR.json()) || [];
+    if (regsR.ok) sourceFilter.regulations = (await regsR.json()) || [];
     if (munisR.ok) sourceFilter.municipalities = (await munisR.json()) || [];
     if (docsR.ok) sourceFilter.documents = (await docsR.json()) || [];
   } catch {}
   // Drop persisted ids that no longer exist
   const validLaws = new Set(sourceFilter.laws.map(l => l.id));
+  const validRegs = new Set(sourceFilter.regulations.map(r => r.id));
   const validMunis = new Set(sourceFilter.municipalities.map(m => m.id));
   const validDocs = new Set(sourceFilter.documents.map(d => d.id));
   for (const id of [...sourceFilter.selectedLaws]) if (!validLaws.has(id)) sourceFilter.selectedLaws.delete(id);
+  for (const id of [...sourceFilter.selectedRegulations]) if (!validRegs.has(id)) sourceFilter.selectedRegulations.delete(id);
   for (const id of [...sourceFilter.selectedMunis]) if (!validMunis.has(id)) sourceFilter.selectedMunis.delete(id);
   for (const id of [...sourceFilter.selectedDocs]) if (!validDocs.has(id)) sourceFilter.selectedDocs.delete(id);
   persistFilter();
@@ -791,11 +844,13 @@ function setupLawFilterControls() {
   const apply = document.getElementById("law-apply");
   const details = document.getElementById("law-filter");
   const lawsBtn = document.getElementById("mode-laws");
+  const regsBtn = document.getElementById("mode-regs");
   const munisBtn = document.getElementById("mode-munis");
 
   search.addEventListener("input", () => renderFilterList(search.value));
   clear.addEventListener("click", () => {
     if (sourceFilter.mode === "laws") sourceFilter.selectedLaws.clear();
+    else if (sourceFilter.mode === "regs") sourceFilter.selectedRegulations.clear();
     else { sourceFilter.selectedMunis.clear(); sourceFilter.selectedDocs.clear(); }
     persistFilter();
     updateFilterSummary();
@@ -804,6 +859,12 @@ function setupLawFilterControls() {
   apply.addEventListener("click", () => { details.removeAttribute("open"); });
   lawsBtn.addEventListener("click", () => {
     sourceFilter.mode = "laws";
+    persistFilter();
+    renderFilterList(search.value);
+    updateFilterSummary();
+  });
+  regsBtn.addEventListener("click", () => {
+    sourceFilter.mode = "regs";
     persistFilter();
     renderFilterList(search.value);
     updateFilterSummary();
@@ -826,12 +887,22 @@ function currentFilterPayload() {
   if (sourceFilter.mode === "laws") {
     return {
       law_ids: sourceFilter.selectedLaws.size ? [...sourceFilter.selectedLaws] : null,
+      regulation_ids: null,
+      municipality_ids: null,
+      document_ids: null,
+    };
+  }
+  if (sourceFilter.mode === "regs") {
+    return {
+      law_ids: null,
+      regulation_ids: sourceFilter.selectedRegulations.size ? [...sourceFilter.selectedRegulations] : null,
       municipality_ids: null,
       document_ids: null,
     };
   }
   return {
     law_ids: null,
+    regulation_ids: null,
     municipality_ids: sourceFilter.selectedMunis.size ? [...sourceFilter.selectedMunis] : null,
     document_ids: sourceFilter.selectedDocs.size ? [...sourceFilter.selectedDocs] : null,
   };
@@ -865,7 +936,7 @@ async function setupChat() {
   const newBtn = document.getElementById("new-chat");
 
   newBtn.addEventListener("click", () => {
-    if (!confirm("Start a new conversation? Current history will be cleared.")) return;
+    if (!confirm("Byrja nýtt samtal? Núverandi saga verður hreinsuð.")) return;
     conversation = [];
     saveConversation();
     renderConversation();
@@ -917,12 +988,12 @@ async function setupChat() {
         } else if (event === "tool_result") {
           // tool line already rendered; nothing to do
         } else if (event === "error") {
-          assistantMsg.content += `\n\n[error: ${data.error}]`;
+          assistantMsg.content += `\n\n[villa: ${data.error}]`;
           bubble.innerHTML = formatContent(assistantMsg.content);
         }
       });
     } catch (err) {
-      assistantMsg.content += `\n\n[network error: ${err.message}]`;
+      assistantMsg.content += `\n\n[netvilla: ${err.message}]`;
       bubble.innerHTML = formatContent(assistantMsg.content);
     } finally {
       saveConversation();

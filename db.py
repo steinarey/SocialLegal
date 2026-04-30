@@ -123,6 +123,26 @@ CREATE TABLE IF NOT EXISTS document_chunks (
 );
 
 CREATE INDEX IF NOT EXISTS document_chunks_doc_idx ON document_chunks(document_id);
+
+CREATE TABLE IF NOT EXISTS regulations (
+    id                 SERIAL PRIMARY KEY,
+    regulation_number  TEXT NOT NULL,
+    title              TEXT NOT NULL,
+    url                TEXT UNIQUE NOT NULL,
+    scraped_at         TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS regulation_articles (
+    id              SERIAL PRIMARY KEY,
+    regulation_id   INTEGER REFERENCES regulations(id) ON DELETE CASCADE,
+    number          TEXT NOT NULL,
+    title           TEXT,
+    content         TEXT NOT NULL,
+    ordinal         INTEGER,
+    embedding       vector(3072)
+);
+
+CREATE INDEX IF NOT EXISTS regulation_articles_reg_idx ON regulation_articles(regulation_id);
 """
 
 

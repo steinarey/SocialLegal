@@ -22,17 +22,18 @@ SYSTEM_PROMPT = """You are a legal research assistant helping Icelandic social w
 Your users are social workers, not lawyers. They need clear, practical answers about whether a law applies to a situation and what it means for their client — not academic legal analysis.
 
 ## Retrieval rules
-- You have two corpora: **statute articles** (national laws, parsed structurally with chapters, articles, cross-references) and **municipal/other documents** (PDF/TXT/HTML uploads, retrieved by chunks). Each has its own search tool.
+- You have three corpora: **statute articles** (national laws, parsed structurally with chapters, articles, cross-references), **regulation articles** (Icelandic reglugerðir from island.is, flat list of articles per regulation), and **municipal/other documents** (PDF/TXT/HTML uploads, retrieved by chunks). Each has its own search tool.
 - Pick the right tool for the question:
   - National-law questions ("what does the pension act say...", "which articles govern...") → `search_articles`.
+  - Regulation questions ("what does reglugerð X say...", "what are the 2026 income limits...") → `search_regulations`.
   - Municipal-rule, internal-policy or document-specific questions ("what are Reykjavík's social-housing rules...", "what does this PDF say about...") → `search_documents`.
-  - When unsure, pick the most likely one first and broaden if it returns nothing relevant.
-- A catalog of available laws and uploaded documents is provided below. Use the `law_ids` argument on `search_articles` (or `document_ids`/`municipality_ids` on `search_documents`) to scope to a subset when the question clearly belongs to one — different sources can use overlapping vocabulary.
-- If the question is genuinely ambiguous about which source applies (e.g. "rules about housing" — could be national law or a Reykjavík regulation), ask the user to pick one or more before searching, instead of guessing. Reference items by their human-readable name so the user can choose.
+  - When unsure, pick the most likely one first and broaden if it returns nothing relevant. Often a law and its implementing regulation both matter — search both.
+- A catalog of available laws, regulations, and uploaded documents is provided below. Use the `law_ids` argument on `search_articles`, `regulation_ids` on `search_regulations`, or `document_ids`/`municipality_ids` on `search_documents` to scope to a subset when the question clearly belongs to one — different sources can use overlapping vocabulary.
+- If the question is genuinely ambiguous about which source applies (e.g. "rules about housing" — could be national law, a regulation, or a Reykjavík rule), ask the user to pick one or more before searching, instead of guessing. Reference items by their human-readable name so the user can choose.
 - If the user has pre-filtered, the catalog notes this and the relevant search tool is automatically restricted. Don't ask them to filter again.
-- If a snippet looks relevant but is incomplete, call `get_article` (statute) or `get_document` (uploaded document) for the full text.
+- If a snippet looks relevant but is incomplete, call `get_article` (statute), `get_regulation_article` (regulation), or `get_document` (uploaded document) for the full text.
 - If a document chunk from `search_documents` is on-topic but cuts off mid-thought, call `get_chunk(chunk_id, offset=+1)` for the next chunk or `offset=-1` for the previous one — cheaper than fetching the whole document. The response flags `is_first_chunk` / `is_last_chunk` so you know when to stop walking.
-- If the question requires broader context within a statute, call `get_chapter`.
+- If the question requires broader context within a statute, call `get_chapter`. For full regulation context, call `get_regulation`.
 - When an article contains cross_references with ingested: true, call `get_article` on those article_ids before answering if the question depends on values or definitions found there.
 - Do not invent legal content. If retrieval returns nothing relevant, say so plainly.
 - Include key word search as well - f.ex. if the user asks "What rules apply to those on temporary visa?" search for whatever phrase you think is best and also include a second search for "temporary visa" as a keyword search in this case.
@@ -255,6 +256,122 @@ def list_laws() -> list[dict]:
     return [{"id": r[0], "law_number": r[1], "title": r[2]} for r in rows]
 
 
+def list_regulations() -> list[dict]:
+    with conn() as c, c.cursor() as cur:
+        cur.execute(
+            "SELECT id, regulation_number, title FROM regulations ORDER BY regulation_number"
+        )
+        rows = cur.fetchall()
+    return [{"id": r[0], "regulation_number": r[1], "title": r[2]} for r in rows]
+
+
+def _search_regulation_articles(
+    query: str, k: int = 5, regulation_ids: list[int] | None = None
+) -> list[dict]:
+    regulation_ids = _normalize_law_ids(regulation_ids)
+    embedding = _embed_query(query)
+    sql = """
+        SELECT ra.id,
+               ra.number,
+               ra.title,
+               LEFT(ra.content, %(snip)s) AS snippet,
+               r.title             AS regulation_title,
+               r.regulation_number,
+               r.id                AS regulation_id
+          FROM regulation_articles ra
+          JOIN regulations r ON r.id = ra.regulation_id
+         WHERE (%(reg_ids)s::int[] IS NULL OR ra.regulation_id = ANY(%(reg_ids)s::int[]))
+         ORDER BY ra.embedding <=> %(emb)s::vector
+         LIMIT %(k)s
+    """
+    with conn() as c:
+        register_vector(c)
+        with c.cursor() as cur:
+            cur.execute(
+                sql,
+                {
+                    "snip": SEARCH_SNIPPET_CHARS,
+                    "reg_ids": regulation_ids,
+                    "emb": embedding,
+                    "k": max(1, min(k, 20)),
+                },
+            )
+            rows = cur.fetchall()
+    return [
+        {
+            "regulation_article_id": r[0],
+            "article_number": r[1],
+            "article_title": r[2],
+            "snippet": r[3],
+            "regulation_title": r[4],
+            "regulation_number": r[5],
+            "regulation_id": r[6],
+        }
+        for r in rows
+    ]
+
+
+def _get_regulation_article(article_id: int) -> dict | None:
+    sql = """
+        SELECT ra.id, ra.number, ra.title, ra.content,
+               r.id, r.regulation_number, r.title
+          FROM regulation_articles ra
+          JOIN regulations r ON r.id = ra.regulation_id
+         WHERE ra.id = %s
+    """
+    with conn() as c, c.cursor() as cur:
+        cur.execute(sql, (article_id,))
+        r = cur.fetchone()
+    if r is None:
+        return None
+    return {
+        "regulation_article_id": r[0],
+        "article_number": r[1],
+        "article_title": r[2],
+        "content": r[3],
+        "regulation_id": r[4],
+        "regulation_number": r[5],
+        "regulation_title": r[6],
+    }
+
+
+def _get_regulation(regulation_id: int) -> dict | None:
+    with conn() as c, c.cursor() as cur:
+        cur.execute(
+            "SELECT id, regulation_number, title, url FROM regulations WHERE id = %s",
+            (regulation_id,),
+        )
+        reg = cur.fetchone()
+        if reg is None:
+            return None
+        cur.execute(
+            """
+            SELECT id, number, title, content, ordinal
+              FROM regulation_articles
+             WHERE regulation_id = %s
+             ORDER BY ordinal
+            """,
+            (regulation_id,),
+        )
+        rows = cur.fetchall()
+    return {
+        "regulation_id": reg[0],
+        "regulation_number": reg[1],
+        "regulation_title": reg[2],
+        "url": reg[3],
+        "articles": [
+            {
+                "regulation_article_id": r[0],
+                "article_number": r[1],
+                "article_title": r[2],
+                "content": r[3],
+                "ordinal": r[4],
+            }
+            for r in rows
+        ],
+    }
+
+
 def _search_documents(
     query: str,
     k: int = 5,
@@ -441,9 +558,18 @@ def _make_tools(
     forced_law_ids: list[int] | None,
     forced_municipality_ids: list[int] | None,
     forced_document_ids: list[int] | None,
+    forced_regulation_ids: list[int] | None,
 ):
     laws_locked = bool(forced_law_ids)
     docs_locked = bool(forced_municipality_ids) or bool(forced_document_ids)
+    regs_locked = bool(forced_regulation_ids)
+
+    def _locked_to_msg() -> str:
+        if laws_locked:
+            return "User pre-filtered to laws"
+        if regs_locked:
+            return "User pre-filtered to regulations"
+        return "User pre-filtered to municipal/other documents"
 
     @tool
     def search_articles(
@@ -463,9 +589,9 @@ def _make_tools(
         Returns:
             JSON list of {article_id, article_number, article_title, snippet, chapter_number, chapter_title, chapter_id, law_title, law_number, law_id, cross_references}. Use article_id with get_article to fetch the full text.
         """
-        if docs_locked:
+        if docs_locked or regs_locked:
             return json.dumps(
-                {"info": "User pre-filtered to municipal/other documents; statute search is disabled this turn."}
+                {"info": f"{_locked_to_msg()}; statute search is disabled this turn."}
             )
         effective = forced_law_ids if forced_law_ids else law_ids
         results = _search_articles(query, k=k, law_ids=effective)
@@ -502,6 +628,62 @@ def _make_tools(
         return json.dumps(result, ensure_ascii=False)
 
     @tool
+    def search_regulations(
+        query: str,
+        k: int = 5,
+        regulation_ids: list[int] | None = None,
+    ) -> str:
+        """Vector similarity search over Icelandic regulation (reglugerð) articles.
+
+        Args:
+            query: Natural-language search query (Icelandic or English).
+            k: Number of results to return (default 5, max 20).
+            regulation_ids: Optional list of regulation ids (from the catalog).
+                Restricts search to those regulations. Omit or pass an empty list
+                to search every ingested regulation.
+
+        Returns:
+            JSON list of {regulation_article_id, article_number, article_title, snippet, regulation_title, regulation_number, regulation_id}. Use regulation_article_id with get_regulation_article to fetch the full text.
+        """
+        if laws_locked or docs_locked:
+            return json.dumps(
+                {"info": f"{_locked_to_msg()}; regulation search is disabled this turn."}
+            )
+        effective = forced_regulation_ids if forced_regulation_ids else regulation_ids
+        results = _search_regulation_articles(query, k=k, regulation_ids=effective)
+        return json.dumps(results, ensure_ascii=False)
+
+    @tool
+    def get_regulation_article(article_id: int) -> str:
+        """Fetch the full content of a single regulation article with its regulation metadata.
+
+        Args:
+            article_id: The integer regulation_article_id (from search_regulations).
+
+        Returns:
+            JSON object with the full article content plus regulation breadcrumb.
+        """
+        result = _get_regulation_article(article_id)
+        if result is None:
+            return json.dumps({"error": "regulation article not found"})
+        return json.dumps(result, ensure_ascii=False)
+
+    @tool
+    def get_regulation(regulation_id: int) -> str:
+        """Fetch all articles within a regulation, in order, with full content.
+
+        Args:
+            regulation_id: The integer regulation id (from search_regulations results).
+
+        Returns:
+            JSON object with regulation metadata and a list of full articles.
+        """
+        result = _get_regulation(regulation_id)
+        if result is None:
+            return json.dumps({"error": "regulation not found"})
+        return json.dumps(result, ensure_ascii=False)
+
+    @tool
     def search_documents(
         query: str,
         k: int = 5,
@@ -521,9 +703,9 @@ def _make_tools(
         Returns:
             JSON list of {chunk_id, chunk_ordinal, snippet, document_id, document_name, source_type, municipality_id, municipality_name}. Use document_id with get_document to fetch the full document.
         """
-        if laws_locked:
+        if laws_locked or regs_locked:
             return json.dumps(
-                {"info": "User pre-filtered to laws; municipal-document search is disabled this turn."}
+                {"info": f"{_locked_to_msg()}; municipal-document search is disabled this turn."}
             )
         eff_docs = forced_document_ids if forced_document_ids else document_ids
         eff_munis = forced_municipality_ids if forced_municipality_ids else municipality_ids
@@ -564,13 +746,23 @@ def _make_tools(
             when there is no further chunk to fetch. If the offset is past the
             document's edge, returns an error with the available ordinal range.
         """
-        if laws_locked:
+        if laws_locked or regs_locked:
             return json.dumps(
-                {"info": "User pre-filtered to laws; document chunk navigation is disabled this turn."}
+                {"info": f"{_locked_to_msg()}; document chunk navigation is disabled this turn."}
             )
         return json.dumps(_get_chunk_relative(chunk_id, offset), ensure_ascii=False)
 
-    return [search_articles, get_article, get_chapter, search_documents, get_document, get_chunk]
+    return [
+        search_articles,
+        get_article,
+        get_chapter,
+        search_regulations,
+        get_regulation_article,
+        get_regulation,
+        search_documents,
+        get_document,
+        get_chunk,
+    ]
 
 
 def _get_llm():
@@ -600,16 +792,21 @@ def _build_catalog_block(
     forced_law_ids: list[int] | None,
     forced_municipality_ids: list[int] | None,
     forced_document_ids: list[int] | None,
+    forced_regulation_ids: list[int] | None,
 ) -> str:
     laws_locked = bool(forced_law_ids)
     docs_locked = bool(forced_municipality_ids) or bool(forced_document_ids)
+    regs_locked = bool(forced_regulation_ids)
 
     sections: list[str] = []
 
     # --- Laws section ---
-    if docs_locked:
+    if docs_locked or regs_locked:
+        other = (
+            "regulations" if regs_locked else "municipal/other documents"
+        )
         sections.append(
-            "## Law catalog\n(Disabled: user pre-filtered to municipal/other documents this turn.)"
+            f"## Law catalog\n(Disabled: user pre-filtered to {other} this turn.)"
         )
     else:
         laws = list_laws()
@@ -639,10 +836,51 @@ def _build_catalog_block(
                 + "\n".join(lines)
             )
 
-    # --- Documents section ---
-    if laws_locked:
+    # --- Regulations section ---
+    if laws_locked or docs_locked:
+        other = "laws" if laws_locked else "municipal/other documents"
         sections.append(
-            "## Municipal/other documents catalog\n(Disabled: user pre-filtered to laws this turn.)"
+            f"## Regulation catalog\n(Disabled: user pre-filtered to {other} this turn.)"
+        )
+    else:
+        regulations = list_regulations()
+        if not regulations:
+            sections.append("## Regulation catalog\n(No regulations have been ingested yet.)")
+        elif regs_locked:
+            forced_set = set(forced_regulation_ids or [])
+            selected = [r for r in regulations if r["id"] in forced_set]
+            if not selected:
+                sections.append(
+                    "## Regulation catalog\nThe user pre-filtered to regulation ids that no longer exist; treat as no filter."
+                )
+            else:
+                lines = [
+                    f"- id={r['id']} | {r['regulation_number']} — {r['title']}"
+                    for r in selected
+                ]
+                sections.append(
+                    "## Regulation catalog (PRE-FILTERED by the user)\n"
+                    "search_regulations is automatically restricted to these regulations. "
+                    "Do not ask the user to filter further — they already did.\n"
+                    + "\n".join(lines)
+                )
+        else:
+            lines = [
+                f"- id={r['id']} | {r['regulation_number']} — {r['title']}"
+                for r in regulations
+            ]
+            sections.append(
+                "## Regulation catalog (full)\n"
+                "Pass relevant ids via `regulation_ids` on `search_regulations` when the question clearly belongs to a subset, "
+                "or ask the user to choose when ambiguous.\n"
+                + "\n".join(lines)
+            )
+
+    # --- Documents section ---
+    if laws_locked or regs_locked:
+        other = "laws" if laws_locked else "regulations"
+        sections.append(
+            f"## Municipal/other documents catalog\n(Disabled: user pre-filtered to {other} this turn.)"
         )
     else:
         munis = list_municipalities_basic()
@@ -712,16 +950,18 @@ def chat_stream(
     law_ids: list[int] | None = None,
     municipality_ids: list[int] | None = None,
     document_ids: list[int] | None = None,
+    regulation_ids: list[int] | None = None,
 ) -> Iterator[str]:
     forced_laws = _normalize_law_ids(law_ids)
     forced_munis = _normalize_law_ids(municipality_ids)
     forced_docs = _normalize_law_ids(document_ids)
+    forced_regs = _normalize_law_ids(regulation_ids)
     llm = _get_llm()
-    tools = _make_tools(forced_laws, forced_munis, forced_docs)
+    tools = _make_tools(forced_laws, forced_munis, forced_docs, forced_regs)
     tools_by_name = {t.name: t for t in tools}
     llm_with_tools = llm.bind_tools(tools)
 
-    catalog = _build_catalog_block(forced_laws, forced_munis, forced_docs)
+    catalog = _build_catalog_block(forced_laws, forced_munis, forced_docs, forced_regs)
     system_text = SYSTEM_PROMPT + "\n\n" + catalog
     messages = [SystemMessage(content=system_text), HumanMessage(content=message)]
 

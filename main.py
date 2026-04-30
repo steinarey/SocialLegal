@@ -36,12 +36,13 @@ from ingestion import (
     ALLOWED_DOC_TYPES,
     create_municipality,
     ingest_document,
+    ingest_regulation_urls,
     ingest_urls,
     list_documents,
     list_municipalities,
     resolve_pending_references,
 )
-from rag import chat_stream, list_laws
+from rag import chat_stream, list_laws, list_regulations
 
 STATIC_DIR = Path(__file__).parent / "static"
 INDEX_FILE = STATIC_DIR / "index.html"
@@ -108,11 +109,17 @@ def laws(user=Depends(require_user)):
     return list_laws()
 
 
+@app.get("/regulations")
+def regulations(user=Depends(require_user)):
+    return list_regulations()
+
+
 class ChatRequest(BaseModel):
     message: str
     law_ids: list[int] | None = None
     municipality_ids: list[int] | None = None
     document_ids: list[int] | None = None
+    regulation_ids: list[int] | None = None
 
 
 @app.post("/chat")
@@ -123,6 +130,7 @@ def chat(req: ChatRequest, user=Depends(require_user)):
             law_ids=req.law_ids,
             municipality_ids=req.municipality_ids,
             document_ids=req.document_ids,
+            regulation_ids=req.regulation_ids,
         ),
         media_type="text/event-stream; charset=utf-8",
         headers={
@@ -195,6 +203,26 @@ def ingest(
     if not url_list:
         raise HTTPException(status_code=400, detail="no urls provided")
     results = ingest_urls(url_list)
+    summary = {
+        "total": len(results),
+        "ingested": sum(1 for r in results if r.get("status") == "ingested"),
+        "skipped": sum(1 for r in results if r.get("status") == "skipped"),
+        "errors": sum(1 for r in results if r.get("status") == "error"),
+    }
+    return {"summary": summary, "results": results}
+
+
+@app.post("/ingest/regulation")
+def ingest_regulation(
+    urls: str = Form(...),
+    secret: str = Form(default=""),
+    session: str | None = Cookie(default=None),
+):
+    _authorize_ingest(session, secret)
+    url_list = [line.strip() for line in urls.splitlines() if line.strip()]
+    if not url_list:
+        raise HTTPException(status_code=400, detail="no urls provided")
+    results = ingest_regulation_urls(url_list)
     summary = {
         "total": len(results),
         "ingested": sum(1 for r in results if r.get("status") == "ingested"),

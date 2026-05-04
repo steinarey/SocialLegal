@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="is">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>SocialLegal — Niðurstöður prufana</title>
+<style>
+  :root {
+    --bg: #f7f7f5;
+    --panel: #ffffff;
+    --ink: #1f2328;
+    --muted: #6b7280;
+    --accent: #1f5fff;
+    --accent-soft: #e8eeff;
+    --border: #e5e7eb;
+    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; min-height: 100%; }
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh;
+  }
+  header.bar {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    padding: 0.75rem 1.25rem;
+    background: var(--panel);
+    border-bottom: 1px solid var(--border);
+  }
+  header.bar h1 { margin: 0; font-size: 1.05rem; font-weight: 600; }
+  header.bar .spacer { flex: 1; }
+  header.bar a {
+    color: var(--muted);
+    text-decoration: none;
+    font-size: 0.85rem;
+  }
+  header.bar a:hover { color: var(--ink); }
+  header.bar a.primary-link { color: var(--accent); }
+  header.bar button {
+    font-size: 0.85rem;
+    padding: 0.4rem 0.7rem;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: #fff;
+    cursor: pointer;
+  }
+
+  main {
+    flex: 1;
+    max-width: 720px;
+    width: 100%;
+    margin: 0 auto;
+    padding: 1.5rem 1.25rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+  }
+
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 1.25rem;
+    box-shadow: 0 6px 20px rgba(0,0,0,0.03);
+  }
+  h2 { margin: 0 0 0.75rem; font-size: 1.05rem; }
+  p.sub { color: var(--muted); margin: 0 0 1rem; font-size: 0.9rem; }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.92rem;
+  }
+  thead th {
+    text-align: left;
+    color: var(--muted);
+    font-weight: 600;
+    font-size: 0.78rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    padding: 0.5rem 0.6rem;
+    border-bottom: 1px solid var(--border);
+  }
+  tbody td {
+    padding: 0.55rem 0.6rem;
+    border-bottom: 1px solid var(--border);
+    vertical-align: middle;
+  }
+  tbody tr:last-child td { border-bottom: none; }
+  td.rank {
+    width: 2.5rem;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+  }
+  td.votes {
+    width: 7rem;
+    text-align: right;
+    font-weight: 600;
+    color: var(--accent);
+    font-variant-numeric: tabular-nums;
+  }
+  td.model code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.78rem;
+    color: var(--muted);
+    background: var(--bg);
+    padding: 0.05rem 0.35rem;
+    border-radius: 4px;
+    margin-left: 0.4rem;
+  }
+  .empty {
+    color: var(--muted);
+    text-align: center;
+    padding: 1.5rem 0;
+  }
+</style>
+</head>
+<body>
+  <header class="bar">
+    <h1>SocialLegal — Niðurstöður prufana</h1>
+    <span class="spacer"></span>
+    <button id="refresh" type="button">Endurnýja</button>
+    <a href="/test" class="primary-link">Prófa líkön</a>
+    <a href="/">Spjall</a>
+    <a href="/admin">Admin</a>
+    <a href="/logout">Skrá út</a>
+  </header>
+  <main>
+    <div class="panel">
+      <h2>Atkvæði</h2>
+      <p class="sub">Heildarfjöldi atkvæða á hvert líkan, raðaður eftir vinsældum.</p>
+      <div id="content">
+        <p class="empty">Hleður…</p>
+      </div>
+    </div>
+  </main>
+
+<script>
+function escapeHtml(s) {
+  return String(s ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
+}
+
+async function load() {
+  const root = document.getElementById("content");
+  root.innerHTML = '<p class="empty">Hleður…</p>';
+  try {
+    const res = await fetch("/test/leaderboard");
+    if (res.status === 401) {
+      window.location.href = "/login";
+      return;
+    }
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const rows = await res.json();
+    if (!rows.length) {
+      root.innerHTML = '<p class="empty">Engin atkvæði enn. Farðu á <a href="/test">prufusíðuna</a> til að byrja.</p>';
+      return;
+    }
+    const table = document.createElement("table");
+    table.innerHTML = `
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>Líkan</th>
+          <th style="text-align:right;">Atkvæði</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    `;
+    const tbody = table.querySelector("tbody");
+    rows.forEach((r, i) => {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td class="rank">${i + 1}</td>
+        <td class="model">${escapeHtml(r.display)}<code>${escapeHtml(r.provider)}/${escapeHtml(r.model)}</code></td>
+        <td class="votes">${r.votes}</td>
+      `;
+      tbody.appendChild(tr);
+    });
+    root.innerHTML = "";
+    root.appendChild(table);
+  } catch (e) {
+    root.innerHTML = `<p class="empty" style="color:var(--err);">Villa: ${escapeHtml(e.message)}</p>`;
+  }
+}
+
+document.getElementById("refresh").addEventListener("click", load);
+load();
+</script>
+</body>
+</html>

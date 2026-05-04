@@ -143,6 +143,14 @@ CREATE TABLE IF NOT EXISTS regulation_articles (
 );
 
 CREATE INDEX IF NOT EXISTS regulation_articles_reg_idx ON regulation_articles(regulation_id);
+
+CREATE TABLE IF NOT EXISTS model_votes (
+    id         SERIAL PRIMARY KEY,
+    provider   TEXT NOT NULL,
+    model_name TEXT NOT NULL,
+    votes      INTEGER NOT NULL DEFAULT 0,
+    UNIQUE (provider, model_name)
+);
 """
 
 

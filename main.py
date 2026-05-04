@@ -1,6 +1,10 @@
 import os
+import random
+import time
+import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
+from threading import Lock
 
 from fastapi import (
     Cookie,
@@ -42,7 +46,18 @@ from ingestion import (
     list_municipalities,
     resolve_pending_references,
 )
-from rag import chat_stream, list_laws, list_regulations
+from rag import (
+    available_providers,
+    chat_stream,
+    get_current_model,
+    init_current_model_from_env,
+    list_known_models,
+    list_laws,
+    list_model_vote_leaderboard,
+    list_regulations,
+    record_model_vote,
+    set_current_model,
+)
 
 STATIC_DIR = Path(__file__).parent / "static"
 INDEX_FILE = STATIC_DIR / "index.html"
@@ -51,6 +66,7 @@ INDEX_FILE = STATIC_DIR / "index.html"
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_schema()
+    init_current_model_from_env()
     yield
 
 
@@ -277,5 +293,162 @@ async def ingest_document_endpoint(
 
     try:
         return ingest_document(name=name, source_type=st, data=data, municipality_id=muni_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+_TEST_SESSIONS: dict[str, dict] = {}
+_TEST_SESSIONS_LOCK = Lock()
+_TEST_SESSION_TTL_SECONDS = 60 * 30
+
+
+def _prune_test_sessions() -> None:
+    cutoff = time.time() - _TEST_SESSION_TTL_SECONDS
+    stale = [sid for sid, s in _TEST_SESSIONS.items() if s["created_at"] < cutoff]
+    for sid in stale:
+        _TEST_SESSIONS.pop(sid, None)
+
+
+class TestAskRequest(BaseModel):
+    message: str
+    law_ids: list[int] | None = None
+    municipality_ids: list[int] | None = None
+    document_ids: list[int] | None = None
+    regulation_ids: list[int] | None = None
+
+
+class TestVoteRequest(BaseModel):
+    session_id: str
+    key: str
+
+
+@app.get("/test")
+def test_page(user=Depends(require_user)):
+    return FileResponse(STATIC_DIR / "test.html")
+
+
+@app.post("/test/ask")
+def test_ask(req: TestAskRequest, user=Depends(require_user)):
+    """Set up a single comparison turn. Returns {session_id, keys}.
+    Frontend then opens /test/stream/{session_id}/{key} per column."""
+    msg = (req.message or "").strip()
+    if not msg:
+        raise HTTPException(status_code=400, detail="empty question")
+    providers = available_providers()
+    if not providers:
+        raise HTTPException(status_code=503, detail="no LLM providers configured")
+
+    items = list(providers)
+    random.shuffle(items)
+
+    sid = str(uuid.uuid4())
+    mapping: dict[str, dict] = {}
+    keys: list[str] = []
+    for i, p in enumerate(items):
+        key = chr(ord("A") + i)
+        keys.append(key)
+        mapping[key] = {
+            "provider": p["provider"],
+            "model": p["model"],
+            "display": p["display"],
+        }
+
+    with _TEST_SESSIONS_LOCK:
+        _prune_test_sessions()
+        _TEST_SESSIONS[sid] = {
+            "mapping": mapping,
+            "question": msg,
+            "filters": {
+                "law_ids": req.law_ids,
+                "municipality_ids": req.municipality_ids,
+                "document_ids": req.document_ids,
+                "regulation_ids": req.regulation_ids,
+            },
+            "voted": False,
+            "created_at": time.time(),
+        }
+
+    return {"session_id": sid, "keys": keys}
+
+
+@app.get("/test/stream/{session_id}/{key}")
+def test_stream(session_id: str, key: str, user=Depends(require_user)):
+    with _TEST_SESSIONS_LOCK:
+        sess = _TEST_SESSIONS.get(session_id)
+        if sess is None:
+            raise HTTPException(status_code=404, detail="session expired or not found")
+        info = sess["mapping"].get(key)
+        if info is None:
+            raise HTTPException(status_code=400, detail="invalid key")
+        message = sess["question"]
+        filters = dict(sess["filters"])
+
+    return StreamingResponse(
+        chat_stream(
+            message,
+            law_ids=filters["law_ids"],
+            municipality_ids=filters["municipality_ids"],
+            document_ids=filters["document_ids"],
+            regulation_ids=filters["regulation_ids"],
+            provider=info["provider"],
+        ),
+        media_type="text/event-stream; charset=utf-8",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@app.post("/test/vote")
+def test_vote(req: TestVoteRequest, user=Depends(require_user)):
+    with _TEST_SESSIONS_LOCK:
+        sess = _TEST_SESSIONS.get(req.session_id)
+        if sess is None:
+            raise HTTPException(status_code=404, detail="session expired or not found")
+        if sess.get("voted"):
+            raise HTTPException(status_code=400, detail="already voted")
+        info = sess["mapping"].get(req.key)
+        if info is None:
+            raise HTTPException(status_code=400, detail="invalid answer key")
+        full_mapping = dict(sess["mapping"])
+        sess["voted"] = True
+
+    record_model_vote(info["provider"], info["model"])
+    return {"voted": info, "mapping": full_mapping}
+
+
+@app.get("/test/results")
+def test_results_page(user=Depends(require_user)):
+    return FileResponse(STATIC_DIR / "test_results.html")
+
+
+@app.get("/test/leaderboard")
+def test_leaderboard(user=Depends(require_user)):
+    return list_model_vote_leaderboard()
+
+
+class SetModelRequest(BaseModel):
+    provider: str
+    model: str
+
+
+@app.get("/admin")
+def admin_page(user=Depends(require_user)):
+    return FileResponse(STATIC_DIR / "admin.html")
+
+
+@app.get("/admin/models")
+def admin_list_models(user=Depends(require_user)):
+    return {
+        "current": get_current_model(),
+        "models": list_known_models(),
+    }
+
+
+@app.post("/admin/models")
+def admin_set_model(req: SetModelRequest, user=Depends(require_user)):
+    try:
+        return {"current": set_current_model(req.provider, req.model)}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))

@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="is">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>SocialLegal — Admin</title>
+<style>
+  :root {
+    --bg: #f7f7f5;
+    --panel: #ffffff;
+    --ink: #1f2328;
+    --muted: #6b7280;
+    --accent: #1f5fff;
+    --accent-soft: #e8eeff;
+    --border: #e5e7eb;
+    --good: #15803d;
+    --error: #b42318;
+    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    min-height: 100vh;
+    padding: 1.5rem;
+  }
+  h1 { margin: 0 0 0.25rem; font-size: 1.4rem; }
+  p.sub { color: var(--muted); margin: 0 0 1.5rem; font-size: 0.9rem; }
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 1.25rem;
+    margin-bottom: 1.25rem;
+    max-width: 640px;
+    box-shadow: 0 6px 20px rgba(0,0,0,0.03);
+  }
+  label.field {
+    display: block;
+    font-size: 0.85rem;
+    color: var(--muted);
+    margin-bottom: 0.4rem;
+  }
+  select {
+    width: 100%;
+    padding: 0.55rem 0.7rem;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font: inherit;
+    background: #fff;
+  }
+  select:focus {
+    outline: 2px solid var(--accent-soft);
+    border-color: var(--accent);
+  }
+  button {
+    padding: 0.55rem 1rem;
+    border-radius: 8px;
+    border: 1px solid var(--accent);
+    background: var(--accent);
+    color: #fff;
+    font: inherit;
+    cursor: pointer;
+  }
+  button:disabled { opacity: 0.55; cursor: not-allowed; }
+  .row { display: flex; gap: 0.5rem; margin-top: 0.85rem; align-items: center; flex-wrap: wrap; }
+  .pill {
+    background: var(--accent-soft);
+    color: var(--accent);
+    border-radius: 999px;
+    padding: 0.15rem 0.6rem;
+    font-size: 0.8rem;
+    font-weight: 600;
+  }
+  .ok { color: var(--good); font-size: 0.85rem; }
+  .err { color: var(--error); font-size: 0.85rem; }
+  .info { color: var(--muted); font-size: 0.85rem; }
+  code { background: #f1f3f5; padding: 0.05rem 0.35rem; border-radius: 4px; }
+</style>
+</head>
+<body>
+  <h1>Admin — Active Model</h1>
+  <p class="sub">Choose which provider/model the chat (<code>/chat</code>) uses. Defaults to <code>DEFAULT_MODEL</code> (format: <code>provider/model</code>) at startup. Selection lives in memory until restart.</p>
+
+  <div class="panel">
+    <div class="row" style="margin: 0 0 0.75rem;">
+      <strong>Current:</strong>
+      <span class="pill" id="current-pill">loading…</span>
+    </div>
+
+    <label class="field" for="model-select">Available models</label>
+    <select id="model-select"></select>
+
+    <div class="row">
+      <button id="save" disabled>Save</button>
+      <span id="msg" class="info"></span>
+    </div>
+  </div>
+
+<script>
+  const sel = document.getElementById("model-select");
+  const saveBtn = document.getElementById("save");
+  const msg = document.getElementById("msg");
+  const pill = document.getElementById("current-pill");
+
+  function setMsg(text, cls) {
+    msg.className = cls || "info";
+    msg.textContent = text || "";
+  }
+
+  function specOf(m) { return `${m.provider}/${m.model}`; }
+
+  async function load() {
+    setMsg("");
+    try {
+      const res = await fetch("/admin/models");
+      if (!res.ok) throw new Error(res.statusText);
+      const data = await res.json();
+      sel.innerHTML = "";
+      data.models.forEach(m => {
+        const opt = document.createElement("option");
+        opt.value = specOf(m);
+        const tag = m.available ? "" : " (no API key)";
+        opt.textContent = `${m.display} — ${specOf(m)}${tag}`;
+        opt.disabled = !m.available;
+        sel.appendChild(opt);
+      });
+      if (data.current) {
+        sel.value = specOf(data.current);
+        pill.textContent = `${data.current.display} (${specOf(data.current)})`;
+      } else {
+        pill.textContent = "none configured";
+      }
+      saveBtn.disabled = !data.current && sel.options.length === 0;
+    } catch (e) {
+      setMsg("Failed to load: " + e.message, "err");
+    }
+  }
+
+  saveBtn.addEventListener("click", async () => {
+    const val = sel.value;
+    if (!val) return;
+    const [provider, model] = val.split("/", 2);
+    saveBtn.disabled = true;
+    setMsg("Saving…");
+    try {
+      const res = await fetch("/admin/models", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ provider, model }),
+      });
+      if (!res.ok) {
+        const detail = await res.json().catch(() => ({}));
+        throw new Error(detail.detail || res.statusText);
+      }
+      const data = await res.json();
+      pill.textContent = `${data.current.display} (${specOf(data.current)})`;
+      setMsg(`Active model set to ${data.current.display}`, "ok");
+    } catch (e) {
+      setMsg("Save failed: " + e.message, "err");
+    } finally {
+      saveBtn.disabled = false;
+    }
+  });
+
+  load();
+</script>
+</body>
+</html>

@@ -575,7 +575,7 @@ def _make_tools(
     def search_articles(
         query: str,
         k: int = 5,
-        law_ids: list[int] | None = None,
+        law_ids: list[int] = [],
     ) -> str:
         """Vector similarity search over Icelandic law articles.
 
@@ -631,7 +631,7 @@ def _make_tools(
     def search_regulations(
         query: str,
         k: int = 5,
-        regulation_ids: list[int] | None = None,
+        regulation_ids: list[int] = [],
     ) -> str:
         """Vector similarity search over Icelandic regulation (reglugerð) articles.
 
@@ -687,8 +687,8 @@ def _make_tools(
     def search_documents(
         query: str,
         k: int = 5,
-        document_ids: list[int] | None = None,
-        municipality_ids: list[int] | None = None,
+        document_ids: list[int] = [],
+        municipality_ids: list[int] = [],
     ) -> str:
         """Vector similarity search over uploaded municipal/other documents (PDF, TXT, HTML).
 
@@ -765,22 +765,217 @@ def _make_tools(
     ]
 
 
-def _get_llm():
-    if os.environ.get("GEMINI_API_KEY"):
+PROVIDERS: dict[str, dict] = {
+    "anthropic": {
+        "env": "ANTHROPIC_API_KEY",
+        "model": "claude-sonnet-4-6",
+        "display": "Anthropic Claude Sonnet 4.6",
+    },
+    "google": {
+        "env": "GEMINI_API_KEY",
+        "model": "gemini-3-flash-preview",
+        "display": "Google Gemini Flash 3 Preview",
+    },
+    "openai": {
+        "env": "OPENAI_API_KEY",
+        "model": "gpt-5.4-mini",
+        "display": "OpenAI GPT-5.4 Mini",
+    },
+}
+
+
+def _llm_for_provider(provider: str, *, temperature: float = 0.2):
+    cfg = PROVIDERS[provider]
+    key = os.environ[cfg["env"]]
+    if provider == "anthropic":
+        from langchain_anthropic import ChatAnthropic
+
+        return ChatAnthropic(model=cfg["model"], api_key=key, temperature=temperature)
+    if provider == "google":
         from langchain_google_genai import ChatGoogleGenerativeAI
 
         return ChatGoogleGenerativeAI(
-            model="gemini-flash-3-preview",
-            google_api_key=os.environ["GEMINI_API_KEY"],
-            temperature=0.2,
+            model=cfg["model"], google_api_key=key, temperature=temperature
         )
-    from langchain_openai import ChatOpenAI
+    if provider == "openai":
+        from langchain_openai import ChatOpenAI
 
-    return ChatOpenAI(
-        model="gpt-5.4-mini",
-        api_key=os.environ["OPENAI_API_KEY"],
-        temperature=0.2,
-    )
+        return ChatOpenAI(model=cfg["model"], api_key=key, temperature=temperature)
+    raise ValueError(f"unknown provider: {provider}")
+
+
+_current_provider: str | None = None
+_current_model: str | None = None
+
+
+def parse_model_spec(spec: str) -> tuple[str, str] | None:
+    """Parse a "provider/model" string. Returns (provider, model) or None."""
+    if not spec or "/" not in spec:
+        return None
+    provider, model = spec.split("/", 1)
+    provider = provider.strip().lower()
+    model = model.strip()
+    if not provider or not model:
+        return None
+    return provider, model
+
+
+def _is_known_model(provider: str, model: str) -> bool:
+    cfg = PROVIDERS.get(provider)
+    return cfg is not None and cfg["model"] == model
+
+
+def _provider_has_key(provider: str) -> bool:
+    cfg = PROVIDERS.get(provider)
+    return cfg is not None and bool(os.environ.get(cfg["env"]))
+
+
+def init_current_model_from_env() -> None:
+    """Set the active model at startup. Honor DEFAULT_MODEL=provider/model when valid;
+    otherwise fall back to the first provider whose API key is configured."""
+    global _current_provider, _current_model
+    spec = (os.environ.get("DEFAULT_MODEL") or "").strip()
+    parsed = parse_model_spec(spec) if spec else None
+    if parsed and _is_known_model(*parsed) and _provider_has_key(parsed[0]):
+        _current_provider, _current_model = parsed
+        return
+    for p in available_providers():
+        _current_provider = p["provider"]
+        _current_model = p["model"]
+        return
+    _current_provider = None
+    _current_model = None
+
+
+def get_current_model() -> dict | None:
+    if _current_provider is None or _current_model is None:
+        return None
+    cfg = PROVIDERS.get(_current_provider)
+    if cfg and cfg["model"] == _current_model:
+        display = cfg["display"]
+    else:
+        display = f"{_current_provider} {_current_model}"
+    return {"provider": _current_provider, "model": _current_model, "display": display}
+
+
+def set_current_model(provider: str, model: str) -> dict:
+    if not _is_known_model(provider, model):
+        raise ValueError(f"unknown model: {provider}/{model}")
+    if not _provider_has_key(provider):
+        raise ValueError(f"provider {provider!r} has no API key configured")
+    global _current_provider, _current_model
+    _current_provider, _current_model = provider, model
+    return get_current_model()  # type: ignore[return-value]
+
+
+def list_known_models() -> list[dict]:
+    """All registered models with availability flag (API key present)."""
+    return [
+        {
+            "provider": p,
+            "model": cfg["model"],
+            "display": cfg["display"],
+            "available": bool(os.environ.get(cfg["env"])),
+        }
+        for p, cfg in PROVIDERS.items()
+    ]
+
+
+def _get_llm():
+    cur = get_current_model()
+    if cur is None:
+        raise RuntimeError("no LLM provider API key configured")
+    return _llm_for_provider(cur["provider"])
+
+
+def available_providers() -> list[dict]:
+    """Providers whose API key is set in env. Each entry has provider/model/display."""
+    out = []
+    for provider, cfg in PROVIDERS.items():
+        if os.environ.get(cfg["env"]):
+            out.append(
+                {"provider": provider, "model": cfg["model"], "display": cfg["display"]}
+            )
+    return out
+
+
+def answer_single(provider: str, question: str) -> str:
+    """One-shot answer from a single provider, no tools — used by /test page."""
+    llm = _llm_for_provider(provider)
+    msgs = [SystemMessage(content=SYSTEM_PROMPT), HumanMessage(content=question)]
+    resp = llm.invoke(msgs)
+    content = resp.content
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for block in content:
+            if isinstance(block, dict) and "text" in block:
+                parts.append(block["text"])
+            else:
+                parts.append(str(block))
+        return "".join(parts)
+    return str(content)
+
+
+def record_model_vote(provider: str, model: str) -> None:
+    with conn() as c, c.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO model_votes (provider, model_name, votes)
+            VALUES (%s, %s, 1)
+            ON CONFLICT (provider, model_name)
+            DO UPDATE SET votes = model_votes.votes + 1
+            """,
+            (provider, model),
+        )
+        c.commit()
+
+
+def list_model_vote_leaderboard() -> list[dict]:
+    with conn() as c, c.cursor() as cur:
+        cur.execute(
+            """
+            SELECT provider, model_name, votes
+              FROM model_votes
+             ORDER BY votes DESC, provider, model_name
+            """
+        )
+        rows = cur.fetchall()
+    out = []
+    for provider, model, votes in rows:
+        cfg = PROVIDERS.get(provider)
+        if cfg and cfg["model"] == model:
+            display = cfg["display"]
+        else:
+            display = f"{provider} {model}"
+        out.append(
+            {"provider": provider, "model": model, "display": display, "votes": votes}
+        )
+    return out
+
+
+def _extract_text_from_chunk(content) -> str:
+    """LangChain stream chunks expose `content` as either a string (OpenAI/Gemini path)
+    or a list of typed blocks (Anthropic path: [{"type":"text","text":"..."}, ...]).
+    Pull plain text out of either shape; return "" for tool_use / non-text blocks."""
+    if not content:
+        return ""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for block in content:
+            if isinstance(block, dict):
+                btype = block.get("type")
+                if btype == "text" and isinstance(block.get("text"), str):
+                    parts.append(block["text"])
+                elif btype is None and isinstance(block.get("text"), str):
+                    parts.append(block["text"])
+            elif isinstance(block, str):
+                parts.append(block)
+        return "".join(parts)
+    return ""
 
 
 def _sse(event: str, data) -> str:
@@ -951,12 +1146,13 @@ def chat_stream(
     municipality_ids: list[int] | None = None,
     document_ids: list[int] | None = None,
     regulation_ids: list[int] | None = None,
+    provider: str | None = None,
 ) -> Iterator[str]:
     forced_laws = _normalize_law_ids(law_ids)
     forced_munis = _normalize_law_ids(municipality_ids)
     forced_docs = _normalize_law_ids(document_ids)
     forced_regs = _normalize_law_ids(regulation_ids)
-    llm = _get_llm()
+    llm = _llm_for_provider(provider) if provider else _get_llm()
     tools = _make_tools(forced_laws, forced_munis, forced_docs, forced_regs)
     tools_by_name = {t.name: t for t in tools}
     llm_with_tools = llm.bind_tools(tools)
@@ -969,10 +1165,9 @@ def chat_stream(
         for _ in range(MAX_STEPS):
             accumulated: AIMessageChunk | None = None
             for chunk in llm_with_tools.stream(messages):
-                if chunk.content:
-                    text_piece = chunk.content if isinstance(chunk.content, str) else ""
-                    if text_piece:
-                        yield _sse("token", {"text": text_piece})
+                text_piece = _extract_text_from_chunk(chunk.content)
+                if text_piece:
+                    yield _sse("token", {"text": text_piece})
                 accumulated = chunk if accumulated is None else accumulated + chunk
 
             if accumulated is None:

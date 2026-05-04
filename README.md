@@ -59,8 +59,13 @@ reported but not auto-ingested.
 
 ### LLM selection
 
-`GEMINI_API_KEY` set → `gemini-flash-3-preview`. Otherwise `gpt-5.4-mini` via
-`OPENAI_API_KEY`. Embeddings always go through OpenAI.
+Active model is selected from the registry in `rag.py:PROVIDERS`
+(currently: `anthropic/claude-sonnet-4-6`, `google/gemini-flash-3-preview`,
+`openai/gpt-5.4-mini`). At startup it defaults to `DEFAULT_MODEL=provider/model`
+(e.g. `anthropic/claude-sonnet-4-6`) when set and the matching API key is
+present; otherwise it falls back to the first provider whose API key is
+configured. A logged-in user can change it at runtime via `/admin`
+(in-memory until restart). Embeddings always go through OpenAI.
 
 ---
 
@@ -90,6 +95,8 @@ seed_municipalities.sql -- canonical municipality list
    ```
    OPENAI_API_KEY=sk-...
    GEMINI_API_KEY=                   # optional
+   ANTHROPIC_API_KEY=                # optional
+   DEFAULT_MODEL=                    # optional, e.g. anthropic/claude-sonnet-4-6
    INGEST_SECRET=...                 # required for curl-based ingest
    SESSION_SECRET=...                # not currently used; reserved
    POSTGRES_PASSWORD=...

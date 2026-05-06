@@ -612,10 +612,16 @@ REGULATION_URL_RE = re.compile(
     r"^https?://(?:www\.)?island\.is/reglugerdir/nr/(\d+)-(\d{4})/?$",
     re.IGNORECASE,
 )
+STJORNARTIDINDI_URL_RE = re.compile(
+    r"^https?://(?:www\.)?island\.is/stjornartidindi/nr/[0-9a-f-]{8,}/?$",
+    re.IGNORECASE,
+)
 REGULATION_ARTICLE_HEADING_RE = re.compile(
     r"^(\d+)\s*\.?\s*gr\.\s*(.*?)\s*$",
     re.IGNORECASE | re.DOTALL,
 )
+STJORNARTIDINDI_NR_RE = re.compile(r"Nr\.\s*(\d+)\s*/\s*(\d{4})")
+STJORNARTIDINDI_TITLE_SUFFIX_RE = re.compile(r"\s*\|\s*Stj[óo]rnart[íi]ðindi\s*$", re.IGNORECASE)
 
 
 @dataclass
@@ -641,6 +647,27 @@ def _regulation_number_from_url(url: str) -> str | None:
     return f"{int(m.group(1))}/{m.group(2)}"
 
 
+def _is_supported_regulation_url(url: str) -> bool:
+    s = url.strip()
+    return bool(REGULATION_URL_RE.match(s) or STJORNARTIDINDI_URL_RE.match(s))
+
+
+def _regulation_number_from_page(soup: BeautifulSoup) -> str:
+    text = soup.get_text(" ", strip=True)
+    m = STJORNARTIDINDI_NR_RE.search(text)
+    if not m:
+        return ""
+    return f"{int(m.group(1))}/{m.group(2)}"
+
+
+def _stjornartidindi_title(soup: BeautifulSoup) -> str:
+    title_tag = soup.find("title")
+    if not title_tag:
+        return ""
+    raw = title_tag.get_text(" ", strip=True)
+    return STJORNARTIDINDI_TITLE_SUFFIX_RE.sub("", raw).rstrip(".").strip()
+
+
 def _parse_regulation_article_heading(raw: str) -> tuple[str, str]:
     """Heading text like "1. gr." or "1. gr. Gildissvið, markmið og framkvæmd." → (number, title)."""
     cleaned = _strip_amendment_brackets(raw)
@@ -657,9 +684,13 @@ def parse_regulation(html: str, url: str) -> ParsedRegulation:
 
     h1 = soup.find("h1")
     title = h1.get_text(" ", strip=True) if h1 else ""
-    title = title.rstrip(".").strip() or url
+    title = title.rstrip(".").strip()
+    if not title:
+        title = _stjornartidindi_title(soup)
+    if not title:
+        title = url
 
-    regulation_number = _regulation_number_from_url(url) or ""
+    regulation_number = _regulation_number_from_url(url) or _regulation_number_from_page(soup)
 
     parsed = ParsedRegulation(regulation_number=regulation_number, title=title, url=url)
 
@@ -686,6 +717,10 @@ def parse_regulation(html: str, url: str) -> ParsedRegulation:
         if not isinstance(child, Tag):
             continue
         classes = child.get("class") or []
+        if "signature" in classes:
+            commit(current)
+            current = None
+            break
         if child.name == "h3" and "article__title" in classes:
             commit(current)
             ordinal_counter += 1
@@ -760,11 +795,14 @@ def store_regulation(parsed: ParsedRegulation) -> int:
 def ingest_regulation_url(url: str) -> dict:
     if regulation_url_already_ingested(url):
         return {"url": url, "status": "skipped"}
-    if not _regulation_number_from_url(url):
+    if not _is_supported_regulation_url(url):
         return {
             "url": url,
             "status": "error",
-            "error": "URL does not look like https://island.is/reglugerdir/nr/<num>-<year>",
+            "error": (
+                "URL must be https://island.is/reglugerdir/nr/<num>-<year> or "
+                "https://island.is/stjornartidindi/nr/<uuid>"
+            ),
         }
     html = fetch(url)
     parsed = parse_regulation(html, url)

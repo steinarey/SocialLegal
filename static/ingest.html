@@ -282,11 +282,12 @@
     <section class="card">
       <h2>Skrá reglugerðir</h2>
       <p class="help">
-        Líma inn slóðir reglugerða frá island.is, eina á línu (t.d.
-        <code>https://island.is/reglugerdir/nr/0933-2025</code>). Slóðum sem þegar
-        eru skráðar er sleppt.
+        Líma inn slóðir reglugerða frá island.is, eina á línu. Tvö snið studd:
+        <code>https://island.is/reglugerdir/nr/0933-2025</code> eða
+        <code>https://island.is/stjornartidindi/nr/&lt;uuid&gt;</code>. Slóðum sem
+        þegar eru skráðar er sleppt.
       </p>
-      <textarea id="reg-urls" spellcheck="false" placeholder="https://island.is/reglugerdir/nr/0933-2025&#10;https://island.is/reglugerdir/nr/1490-2025"></textarea>
+      <textarea id="reg-urls" spellcheck="false" placeholder="https://island.is/reglugerdir/nr/0933-2025&#10;https://island.is/stjornartidindi/nr/472bdf38-e10f-45bd-8e5b-801bc4f6213b"></textarea>
       <div class="row">
         <button id="reg-ingest-btn">Skrá slóðir</button>
         <span class="status" id="reg-ingest-status"></span>

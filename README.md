@@ -189,6 +189,46 @@ SELECT count(*) FROM cross_references
 SHOW server_encoding;                            -- should be UTF8
 ```
 
+### Backup and restore the database
+
+The embedding work is the expensive part — back up the Postgres volume so a
+server crash doesn't force re-ingesting every law and document.
+
+Dump (custom format, compressed, includes `vector` columns):
+
+```bash
+docker compose exec -T db pg_dump -U legal -d legal -Fc \
+  > legal-$(date +%Y%m%d-%H%M%S).dump
+```
+
+Restore into a running, empty (or to-be-clobbered) database:
+
+```bash
+docker compose exec -T db pg_restore -U legal -d legal --clean --if-exists \
+  < legal-YYYYMMDD-HHMMSS.dump
+```
+
+Plain-SQL alternative if you want a human-readable, gzipped backup:
+
+```bash
+docker compose exec -T db pg_dump -U legal -d legal \
+  | gzip > legal-$(date +%Y%m%d-%H%M%S).sql.gz
+
+# restore:
+gunzip -c legal-YYYYMMDD-HHMMSS.sql.gz \
+  | docker compose exec -T db psql -U legal -d legal
+```
+
+Nightly cron (host crontab) example:
+
+```
+0 3 * * * cd /path/to/SocialLegal && docker compose exec -T db pg_dump -U legal -d legal -Fc > /backups/legal-$(date +\%Y\%m\%d).dump
+```
+
+`pg_dump` is safe while the app is running. Copy the dump files off-box
+(S3, rsync, etc.) — keeping them on the same disk as the DB volume defeats
+the point.
+
 ### Restart / rebuild
 
 ```bash

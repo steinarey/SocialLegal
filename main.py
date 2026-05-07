@@ -57,6 +57,7 @@ from rag import (
     list_regulations,
     record_model_vote,
     set_current_model,
+    usage_summary,
 )
 
 STATIC_DIR = Path(__file__).parent / "static"
@@ -147,6 +148,9 @@ def chat(req: ChatRequest, user=Depends(require_user)):
             municipality_ids=req.municipality_ids,
             document_ids=req.document_ids,
             regulation_ids=req.regulation_ids,
+            user_id=user["id"],
+            username=user["username"],
+            kind="chat",
         ),
         media_type="text/event-stream; charset=utf-8",
         headers={
@@ -391,6 +395,9 @@ def test_stream(session_id: str, key: str, user=Depends(require_user)):
             document_ids=filters["document_ids"],
             regulation_ids=filters["regulation_ids"],
             provider=info["provider"],
+            user_id=user["id"],
+            username=user["username"],
+            kind="test",
         ),
         media_type="text/event-stream; charset=utf-8",
         headers={
@@ -451,4 +458,21 @@ def admin_set_model(req: SetModelRequest, user=Depends(require_user)):
     try:
         return {"current": set_current_model(req.provider, req.model)}
     except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.get("/usage")
+def usage_page(user=Depends(require_user)):
+    return FileResponse(STATIC_DIR / "usage.html")
+
+
+@app.get("/usage/data")
+def usage_data(
+    user=Depends(require_user),
+    from_date: str = "",
+    to_date: str = "",
+):
+    try:
+        return usage_summary(from_date=from_date or None, to_date=to_date or None)
+    except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))

@@ -151,6 +151,21 @@ CREATE TABLE IF NOT EXISTS model_votes (
     votes      INTEGER NOT NULL DEFAULT 0,
     UNIQUE (provider, model_name)
 );
+
+CREATE TABLE IF NOT EXISTS usage_logs (
+    id             BIGSERIAL PRIMARY KEY,
+    user_id        INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    username       TEXT,
+    provider       TEXT NOT NULL,
+    model_name     TEXT NOT NULL,
+    input_tokens   INTEGER NOT NULL DEFAULT 0,
+    output_tokens  INTEGER NOT NULL DEFAULT 0,
+    kind           TEXT,
+    created_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS usage_logs_user_idx ON usage_logs(user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS usage_logs_created_idx ON usage_logs(created_at DESC);
 """
 
 

@@ -800,7 +800,12 @@ def _llm_for_provider(provider: str, *, temperature: float = 0.2):
     if provider == "openai":
         from langchain_openai import ChatOpenAI
 
-        return ChatOpenAI(model=cfg["model"], api_key=key, temperature=temperature)
+        return ChatOpenAI(
+            model=cfg["model"],
+            api_key=key,
+            temperature=temperature,
+            stream_usage=True,
+        )
     raise ValueError(f"unknown provider: {provider}")
 
 
@@ -916,6 +921,83 @@ def answer_single(provider: str, question: str) -> str:
                 parts.append(str(block))
         return "".join(parts)
     return str(content)
+
+
+def record_usage(
+    user_id: int | None,
+    username: str | None,
+    provider: str,
+    model: str,
+    input_tokens: int,
+    output_tokens: int,
+    kind: str = "chat",
+) -> None:
+    """Insert one row into usage_logs. Best-effort: callers wrap in try/except."""
+    with conn() as c, c.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO usage_logs
+                (user_id, username, provider, model_name,
+                 input_tokens, output_tokens, kind)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            """,
+            (
+                user_id,
+                username,
+                provider,
+                model,
+                int(input_tokens or 0),
+                int(output_tokens or 0),
+                kind,
+            ),
+        )
+        c.commit()
+
+
+def usage_summary(
+    from_date: str | None = None,
+    to_date: str | None = None,
+) -> dict:
+    """Aggregate usage_logs by username for an inclusive date range.
+
+    `from_date` / `to_date` accept "YYYY-MM-DD" or None.
+    `to_date` is inclusive — rows on that day are counted.
+    Returns {rows: [...], totals: {...}, range: {from, to}}.
+    """
+    f = (from_date or "").strip() or None
+    t = (to_date or "").strip() or None
+    sql = """
+        SELECT COALESCE(username, '(unknown)') AS uname,
+               COUNT(*)                        AS queries,
+               COALESCE(SUM(input_tokens), 0)  AS input_tokens,
+               COALESCE(SUM(output_tokens), 0) AS output_tokens
+          FROM usage_logs
+         WHERE (%(f)s::date IS NULL OR created_at >= %(f)s::date)
+           AND (%(t)s::date IS NULL OR created_at <  (%(t)s::date + INTERVAL '1 day'))
+         GROUP BY COALESCE(username, '(unknown)')
+         ORDER BY (COALESCE(SUM(input_tokens), 0) + COALESCE(SUM(output_tokens), 0)) DESC,
+                  uname
+    """
+    with conn() as c, c.cursor() as cur:
+        cur.execute(sql, {"f": f, "t": t})
+        rows = cur.fetchall()
+    out_rows = [
+        {
+            "username": r[0],
+            "queries": int(r[1]),
+            "input_tokens": int(r[2]),
+            "output_tokens": int(r[3]),
+            "total_tokens": int(r[2]) + int(r[3]),
+        }
+        for r in rows
+    ]
+    totals = {
+        "queries": sum(r["queries"] for r in out_rows),
+        "input_tokens": sum(r["input_tokens"] for r in out_rows),
+        "output_tokens": sum(r["output_tokens"] for r in out_rows),
+        "total_tokens": sum(r["total_tokens"] for r in out_rows),
+    }
+    return {"rows": out_rows, "totals": totals, "range": {"from": f, "to": t}}
 
 
 def record_model_vote(provider: str, model: str) -> None:
@@ -1147,12 +1229,27 @@ def chat_stream(
     document_ids: list[int] | None = None,
     regulation_ids: list[int] | None = None,
     provider: str | None = None,
+    user_id: int | None = None,
+    username: str | None = None,
+    kind: str = "chat",
 ) -> Iterator[str]:
     forced_laws = _normalize_law_ids(law_ids)
     forced_munis = _normalize_law_ids(municipality_ids)
     forced_docs = _normalize_law_ids(document_ids)
     forced_regs = _normalize_law_ids(regulation_ids)
-    llm = _llm_for_provider(provider) if provider else _get_llm()
+
+    if provider:
+        if provider not in PROVIDERS:
+            raise RuntimeError(f"unknown provider: {provider}")
+        model_name = PROVIDERS[provider]["model"]
+    else:
+        cur_model = get_current_model()
+        if cur_model is None:
+            raise RuntimeError("no LLM provider API key configured")
+        provider = cur_model["provider"]
+        model_name = cur_model["model"]
+    llm = _llm_for_provider(provider)
+
     tools = _make_tools(forced_laws, forced_munis, forced_docs, forced_regs)
     tools_by_name = {t.name: t for t in tools}
     llm_with_tools = llm.bind_tools(tools)
@@ -1160,6 +1257,9 @@ def chat_stream(
     catalog = _build_catalog_block(forced_laws, forced_munis, forced_docs, forced_regs)
     system_text = SYSTEM_PROMPT + "\n\n" + catalog
     messages = [SystemMessage(content=system_text), HumanMessage(content=message)]
+
+    total_input = 0
+    total_output = 0
 
     try:
         for _ in range(MAX_STEPS):
@@ -1172,6 +1272,10 @@ def chat_stream(
 
             if accumulated is None:
                 break
+
+            um = getattr(accumulated, "usage_metadata", None) or {}
+            total_input += int(um.get("input_tokens") or 0)
+            total_output += int(um.get("output_tokens") or 0)
 
             messages.append(accumulated)
 
@@ -1200,3 +1304,17 @@ def chat_stream(
         yield _sse("done", {})
     except Exception as e:
         yield _sse("error", {"error": str(e)})
+    finally:
+        if total_input or total_output:
+            try:
+                record_usage(
+                    user_id=user_id,
+                    username=username,
+                    provider=provider,
+                    model=model_name,
+                    input_tokens=total_input,
+                    output_tokens=total_output,
+                    kind=kind,
+                )
+            except Exception:
+                pass

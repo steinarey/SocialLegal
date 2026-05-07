@@ -1,0 +1,304 @@
+<!doctype html>
+<html lang="is">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>SocialLegal — Usage</title>
+<style>
+  :root {
+    --bg: #f7f7f5;
+    --panel: #ffffff;
+    --ink: #1f2328;
+    --muted: #6b7280;
+    --accent: #1f5fff;
+    --accent-soft: #e8eeff;
+    --border: #e5e7eb;
+    --good: #15803d;
+    --error: #b42318;
+    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    min-height: 100vh;
+    padding: 1.5rem;
+  }
+  h1 { margin: 0 0 0.25rem; font-size: 1.4rem; }
+  p.sub { color: var(--muted); margin: 0 0 1.5rem; font-size: 0.9rem; }
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 1.25rem;
+    margin-bottom: 1.25rem;
+    max-width: 960px;
+    box-shadow: 0 6px 20px rgba(0,0,0,0.03);
+  }
+  label.field {
+    display: block;
+    font-size: 0.85rem;
+    color: var(--muted);
+    margin-bottom: 0.4rem;
+  }
+  input[type="date"] {
+    padding: 0.5rem 0.7rem;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font: inherit;
+    background: #fff;
+  }
+  input[type="date"]:focus {
+    outline: 2px solid var(--accent-soft);
+    border-color: var(--accent);
+  }
+  button {
+    padding: 0.55rem 1rem;
+    border-radius: 8px;
+    border: 1px solid var(--accent);
+    background: var(--accent);
+    color: #fff;
+    font: inherit;
+    cursor: pointer;
+  }
+  button.secondary {
+    background: #fff;
+    color: var(--ink);
+    border-color: var(--border);
+  }
+  button:disabled { opacity: 0.55; cursor: not-allowed; }
+  .row { display: flex; gap: 0.75rem; align-items: flex-end; flex-wrap: wrap; }
+  .field-group { display: flex; flex-direction: column; }
+  .preset-row { display: flex; gap: 0.4rem; margin-top: 0.85rem; flex-wrap: wrap; }
+  .preset-row button {
+    padding: 0.3rem 0.7rem;
+    font-size: 0.85rem;
+    border: 1px solid var(--border);
+    background: #fff;
+    color: var(--ink);
+    border-radius: 999px;
+  }
+  .preset-row button:hover { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+  .info { color: var(--muted); font-size: 0.85rem; }
+  .err { color: var(--error); font-size: 0.85rem; }
+
+  table { border-collapse: collapse; width: 100%; margin-top: 0.5rem; }
+  th, td {
+    text-align: right;
+    padding: 0.55rem 0.7rem;
+    border-bottom: 1px solid var(--border);
+    font-variant-numeric: tabular-nums;
+  }
+  th:first-child, td:first-child { text-align: left; }
+  thead th {
+    background: #f1f3f5;
+    font-size: 0.82rem;
+    color: var(--muted);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  tbody tr:hover { background: #fafafa; }
+  tfoot td {
+    font-weight: 700;
+    background: var(--accent-soft);
+    color: var(--accent);
+    border-bottom: none;
+  }
+  .empty { color: var(--muted); padding: 1.25rem 0.7rem; text-align: center; font-style: italic; }
+  .totals-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 0.75rem;
+    margin-top: 0.5rem;
+  }
+  .total-card {
+    background: var(--accent-soft);
+    border-radius: 10px;
+    padding: 0.75rem 1rem;
+  }
+  .total-card .label { font-size: 0.75rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+  .total-card .value { font-size: 1.4rem; font-weight: 700; color: var(--accent); font-variant-numeric: tabular-nums; }
+</style>
+</head>
+<body>
+  <h1>Usage</h1>
+  <p class="sub">Per-user query count and token totals from <code>usage_logs</code>. Date range is inclusive on both ends (server-local time).</p>
+
+  <div class="panel">
+    <div class="row">
+      <div class="field-group">
+        <label class="field" for="from-date">From</label>
+        <input type="date" id="from-date" />
+      </div>
+      <div class="field-group">
+        <label class="field" for="to-date">To</label>
+        <input type="date" id="to-date" />
+      </div>
+      <button id="apply">Apply</button>
+      <button id="clear" class="secondary">Clear</button>
+      <span id="msg" class="info"></span>
+    </div>
+    <div class="preset-row">
+      <button data-preset="today">Today</button>
+      <button data-preset="7d">Last 7 days</button>
+      <button data-preset="30d">Last 30 days</button>
+      <button data-preset="month">This month</button>
+      <button data-preset="all">All time</button>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2 style="margin: 0 0 0.5rem; font-size: 1.05rem;">Totals</h2>
+    <div class="totals-grid" id="totals">
+      <div class="total-card"><div class="label">Queries</div><div class="value" id="t-queries">—</div></div>
+      <div class="total-card"><div class="label">Input tokens</div><div class="value" id="t-input">—</div></div>
+      <div class="total-card"><div class="label">Output tokens</div><div class="value" id="t-output">—</div></div>
+      <div class="total-card"><div class="label">Total tokens</div><div class="value" id="t-total">—</div></div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2 style="margin: 0 0 0.5rem; font-size: 1.05rem;">By user</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>User</th>
+          <th>Queries</th>
+          <th>Input</th>
+          <th>Output</th>
+          <th>Total</th>
+        </tr>
+      </thead>
+      <tbody id="rows"></tbody>
+      <tfoot id="tfoot" style="display:none;">
+        <tr>
+          <td>Total</td>
+          <td id="f-queries"></td>
+          <td id="f-input"></td>
+          <td id="f-output"></td>
+          <td id="f-total"></td>
+        </tr>
+      </tfoot>
+    </table>
+  </div>
+
+<script>
+  const fromEl = document.getElementById("from-date");
+  const toEl   = document.getElementById("to-date");
+  const applyBtn = document.getElementById("apply");
+  const clearBtn = document.getElementById("clear");
+  const msg = document.getElementById("msg");
+  const rowsEl = document.getElementById("rows");
+  const tfoot = document.getElementById("tfoot");
+
+  const fmt = n => (n == null ? "—" : Number(n).toLocaleString());
+
+  function setMsg(t, cls) { msg.className = cls || "info"; msg.textContent = t || ""; }
+
+  function isoLocal(d) {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${y}-${m}-${day}`;
+  }
+
+  async function load() {
+    setMsg("Loading…");
+    rowsEl.innerHTML = "";
+    tfoot.style.display = "none";
+    const params = new URLSearchParams();
+    if (fromEl.value) params.set("from_date", fromEl.value);
+    if (toEl.value)   params.set("to_date",   toEl.value);
+    try {
+      const res = await fetch("/usage/data?" + params.toString());
+      if (!res.ok) {
+        const detail = await res.json().catch(() => ({}));
+        throw new Error(detail.detail || res.statusText);
+      }
+      const data = await res.json();
+      render(data);
+      setMsg("");
+    } catch (e) {
+      setMsg("Failed to load: " + e.message, "err");
+    }
+  }
+
+  function render(data) {
+    document.getElementById("t-queries").textContent = fmt(data.totals.queries);
+    document.getElementById("t-input").textContent   = fmt(data.totals.input_tokens);
+    document.getElementById("t-output").textContent  = fmt(data.totals.output_tokens);
+    document.getElementById("t-total").textContent   = fmt(data.totals.total_tokens);
+
+    rowsEl.innerHTML = "";
+    if (!data.rows.length) {
+      const tr = document.createElement("tr");
+      const td = document.createElement("td");
+      td.colSpan = 5;
+      td.className = "empty";
+      td.textContent = "No usage in this range.";
+      tr.appendChild(td);
+      rowsEl.appendChild(tr);
+      tfoot.style.display = "none";
+      return;
+    }
+    for (const r of data.rows) {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td>${escapeHtml(r.username)}</td>
+        <td>${fmt(r.queries)}</td>
+        <td>${fmt(r.input_tokens)}</td>
+        <td>${fmt(r.output_tokens)}</td>
+        <td>${fmt(r.total_tokens)}</td>
+      `;
+      rowsEl.appendChild(tr);
+    }
+    document.getElementById("f-queries").textContent = fmt(data.totals.queries);
+    document.getElementById("f-input").textContent   = fmt(data.totals.input_tokens);
+    document.getElementById("f-output").textContent  = fmt(data.totals.output_tokens);
+    document.getElementById("f-total").textContent   = fmt(data.totals.total_tokens);
+    tfoot.style.display = "";
+  }
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, c => ({
+      "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+    }[c]));
+  }
+
+  applyBtn.addEventListener("click", load);
+  clearBtn.addEventListener("click", () => {
+    fromEl.value = "";
+    toEl.value = "";
+    load();
+  });
+
+  document.querySelectorAll(".preset-row button").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const preset = btn.dataset.preset;
+      const today = new Date();
+      let from = null, to = isoLocal(today);
+      if (preset === "today") {
+        from = isoLocal(today);
+      } else if (preset === "7d") {
+        const d = new Date(today); d.setDate(d.getDate() - 6);
+        from = isoLocal(d);
+      } else if (preset === "30d") {
+        const d = new Date(today); d.setDate(d.getDate() - 29);
+        from = isoLocal(d);
+      } else if (preset === "month") {
+        from = isoLocal(new Date(today.getFullYear(), today.getMonth(), 1));
+      } else if (preset === "all") {
+        from = ""; to = "";
+      }
+      fromEl.value = from;
+      toEl.value = to;
+      load();
+    });
+  });
+
+  load();
+</script>
+</body>
+</html>
